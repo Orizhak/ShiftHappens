@@ -113,13 +113,50 @@ export function calculateUserFitness(
     fitnessScore -= 60;
   }
 
+  // Per-slot category checks
+  const slotReqs = shiftData.slotRequirements ?? [];
+  if (slotReqs.length > 0) {
+    // Count how many slots are open (no specific requirement) vs constrained
+    const constrainedSlots = slotReqs.filter(sr => sr.requiredCategories.length > 0);
+    const openSlots = shiftData.numUsers - constrainedSlots.length;
+
+    // Check if user matches at least one constrained slot
+    const matchesConstrainedSlot = constrainedSlots.some(sr =>
+      sr.requiredCategories.some(c => userCatIds.includes(c))
+    );
+
+    // User is eligible if they match a constrained slot OR there are open slots
+    if (openSlots <= 0 && !matchesConstrainedSlot) {
+      // ALL slots are constrained and user doesn't match any
+      unfitReasons.push('לא מתאים לאף עמדה');
+      fitnessScore -= 40;
+    } else if (matchesConstrainedSlot) {
+      // Bonus for matching a constrained slot
+      fitnessScore += 5;
+    }
+  }
+
   // Points fairness penalty
   fitnessScore -= Math.min(30, Math.floor(currentPoints / 5));
+
+  // Check if user can't fill any slot due to per-slot constraints
+  const allSlotsConstrained = slotReqs.length > 0 &&
+    slotReqs.filter(sr => sr.requiredCategories.length > 0).length >= shiftData.numUsers;
+  const matchesNoSlot = allSlotsConstrained &&
+    !slotReqs.some(sr => sr.requiredCategories.some(c => userCatIds.includes(c)));
 
   const isFit =
     fitnessScore >= 50 &&
     !hasSameDayShift &&
-    !forbidden.some((c) => userCatIds.includes(c));
+    !forbidden.some((c) => userCatIds.includes(c)) &&
+    !matchesNoSlot;
+
+  // Compute which constrained slots this user matches
+  const matchedSlots = slotReqs.length > 0
+    ? slotReqs
+        .filter(sr => sr.requiredCategories.length > 0 && sr.requiredCategories.some(c => userCatIds.includes(c)))
+        .map(sr => sr.slotIndex)
+    : undefined;
 
   return {
     user,
@@ -130,6 +167,7 @@ export function calculateUserFitness(
     conflictingShift,
     weeklyHours,
     currentPoints,
+    matchedSlots,
   };
 }
 

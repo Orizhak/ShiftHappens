@@ -126,6 +126,8 @@ export interface UserFitness {
   conflictingShift?: Shift;
   weeklyHours: number;
   currentPoints: number;
+  /** Slot indices this user qualifies for based on per-slot categories */
+  matchedSlots?: number[];
 }
 
 export interface SlotRequirement {

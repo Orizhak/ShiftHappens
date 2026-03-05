@@ -596,6 +596,15 @@ function AssignmentStep({
                   <div>
                     <p className="text-sm font-medium text-white">{u.user.name}</p>
                     <p className="text-xs text-gray-400">{u.currentPoints} נק' · {Math.round(u.weeklyHours)}ש' השבוע</p>
+                    {u.matchedSlots && u.matchedSlots.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {u.matchedSlots.map((slot) => (
+                          <span key={slot} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                            עמדה {slot + 1}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {u.unfitReasons.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
                         {u.unfitReasons.map((reason, idx) => (
