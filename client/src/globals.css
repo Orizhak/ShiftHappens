@@ -1,0 +1,170 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 10%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 10%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 7%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 217 91% 60%;
+    --radius: 0.75rem;
+    --sidebar-background: 222 47% 7%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 7%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217 33% 17%;
+    --sidebar-ring: 217 91% 60%;
+
+    /* Glass tokens */
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-blur: 12px;
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+
+    /* Status colors */
+    --status-completed: 142 71% 45%;
+    --status-active: 217 91% 60%;
+    --status-exclude: 0 84% 60%;
+    --status-prefer: 45 93% 47%;
+
+    /* Glow colors */
+    --glow-blue: 0 0 20px rgba(59, 130, 246, 0.3);
+    --glow-green: 0 0 20px rgba(34, 197, 94, 0.3);
+    --glow-amber: 0 0 20px rgba(245, 158, 11, 0.3);
+    --glow-red: 0 0 20px rgba(239, 68, 68, 0.3);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Heebo', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    direction: rtl;
+  }
+
+  [dir="rtl"] {
+    text-align: right;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    text-align: right;
+    direction: rtl;
+  }
+
+  select option {
+    background: #1e293b;
+    color: white;
+  }
+
+  /* Custom scrollbar */
+  *::-webkit-scrollbar { width: 6px; }
+  *::-webkit-scrollbar-track { background: transparent !important; }
+  *::-webkit-scrollbar-thumb { background-color: #4b5563 !important; border-radius: 3px; }
+  *::-webkit-scrollbar-thumb:hover { background-color: #6b7280 !important; }
+
+  /* Mobile */
+  @media (max-width: 768px) {
+    body { overflow-x: hidden; }
+    button, a { min-height: 44px; }
+  }
+
+  /* PWA safe areas */
+  @media (display-mode: standalone) {
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .glass-card-hover {
+    transition: all 0.2s ease;
+  }
+  .glass-card-hover:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
+  }
+
+  .glass-input {
+    @apply w-full px-4 py-2.5 rounded-lg text-white placeholder-gray-500 transition-all;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .glass-input:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .glass-button-primary {
+    @apply px-4 py-2.5 rounded-lg font-medium text-white transition-all;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+  }
+  .glass-button-primary:hover {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.4);
+  }
+  .glass-button-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .page-bg {
+    background: #0b1120;
+    min-height: 100vh;
+  }
+
+  .glass-header {
+    background: rgba(11, 17, 32, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+#root {
+  min-height: 100vh;
+}
