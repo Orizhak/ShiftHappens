@@ -98,65 +98,69 @@ export function calculateUserFitness(
     fitnessScore -= 30;
   }
 
-  // Category checks
+  // ── Category checks ──────────────────────────────────────────────────────
   const userCatIds = user.userCategories ?? [];
   const required = shiftData.requiredUserCategories ?? [];
   const forbidden = shiftData.forbiddenUserCategories ?? [];
+  const slotReqs = shiftData.slotRequirements ?? [];
 
-  if (required.length > 0 && !required.some((c) => userCatIds.includes(c))) {
-    unfitReasons.push('חסרות קטגוריות נדרשות');
-    fitnessScore -= 40;
-  }
-
-  if (forbidden.some((c) => userCatIds.includes(c))) {
+  // Global forbidden — hard block
+  const hasForbidden = forbidden.some((c) => userCatIds.includes(c));
+  if (hasForbidden) {
     unfitReasons.push('יש קטגוריות אסורות');
     fitnessScore -= 60;
   }
 
-  // Per-slot category checks
-  const slotReqs = shiftData.slotRequirements ?? [];
-  if (slotReqs.length > 0) {
-    // Count how many slots are open (no specific requirement) vs constrained
-    const constrainedSlots = slotReqs.filter(sr => sr.requiredCategories.length > 0);
-    const openSlots = shiftData.numUsers - constrainedSlots.length;
+  // Global required — user must have at least one
+  const failsGlobalRequired = required.length > 0 && !required.some((c) => userCatIds.includes(c));
+  if (failsGlobalRequired) {
+    unfitReasons.push('חסרות קטגוריות נדרשות');
+    fitnessScore -= 40;
+  }
 
-    // Check if user matches at least one constrained slot
-    const matchesConstrainedSlot = constrainedSlots.some(sr =>
-      sr.requiredCategories.some(c => userCatIds.includes(c))
-    );
+  // Per-slot categories — determine which specific slots this user can fill
+  // Build list of all slots (0..numUsers-1), figure out which ones have constraints
+  const constrainedSlots = slotReqs.filter(sr => sr.requiredCategories.length > 0);
 
-    // User is eligible if they match a constrained slot OR there are open slots
-    if (openSlots <= 0 && !matchesConstrainedSlot) {
-      // ALL slots are constrained and user doesn't match any
-      unfitReasons.push('לא מתאים לאף עמדה');
-      fitnessScore -= 40;
-    } else if (matchesConstrainedSlot) {
-      // Bonus for matching a constrained slot
-      fitnessScore += 5;
+  // Which constrained slots does this user match?
+  const matchedSlots: number[] = [];
+  for (const sr of constrainedSlots) {
+    if (sr.requiredCategories.some(c => userCatIds.includes(c))) {
+      matchedSlots.push(sr.slotIndex);
     }
+  }
+
+  // Slots without specific requirements (open to anyone who passes global checks)
+  const constrainedSlotIndices = new Set(constrainedSlots.map(sr => sr.slotIndex));
+  const openSlotCount = shiftData.numUsers - constrainedSlots.length;
+  const canFillOpenSlot = openSlotCount > 0;
+  const canFillConstrainedSlot = matchedSlots.length > 0;
+
+  // If user matches constrained slots → bonus; otherwise small penalty
+  if (constrainedSlots.length > 0) {
+    if (canFillConstrainedSlot) {
+      fitnessScore += 10;
+    } else if (canFillOpenSlot) {
+      // Can only fill open slots — lower priority than slot-matched users
+      fitnessScore -= 10;
+    }
+  }
+
+  // If user can't fill ANY slot (no open slots + no matching constrained slots)
+  if (!canFillOpenSlot && !canFillConstrainedSlot && constrainedSlots.length > 0) {
+    unfitReasons.push('לא מתאים לאף עמדה');
+    fitnessScore -= 40;
   }
 
   // Points fairness penalty
   fitnessScore -= Math.min(30, Math.floor(currentPoints / 5));
 
-  // Check if user can't fill any slot due to per-slot constraints
-  const allSlotsConstrained = slotReqs.length > 0 &&
-    slotReqs.filter(sr => sr.requiredCategories.length > 0).length >= shiftData.numUsers;
-  const matchesNoSlot = allSlotsConstrained &&
-    !slotReqs.some(sr => sr.requiredCategories.some(c => userCatIds.includes(c)));
-
   const isFit =
     fitnessScore >= 50 &&
     !hasSameDayShift &&
-    !forbidden.some((c) => userCatIds.includes(c)) &&
-    !matchesNoSlot;
-
-  // Compute which constrained slots this user matches
-  const matchedSlots = slotReqs.length > 0
-    ? slotReqs
-        .filter(sr => sr.requiredCategories.length > 0 && sr.requiredCategories.some(c => userCatIds.includes(c)))
-        .map(sr => sr.slotIndex)
-    : undefined;
+    !hasForbidden &&
+    !failsGlobalRequired &&
+    (constrainedSlots.length === 0 || canFillOpenSlot || canFillConstrainedSlot);
 
   return {
     user,
@@ -192,13 +196,20 @@ export function selectAutoAssignment(
   const assigned = new Set<string>();
   const result: string[] = [];
 
-  // Sort slots: most constrained first (those with slot requirements)
-  const slotsWithReqs = slotRequirements
+  // Sort constrained slots: fewest matching candidates first (most constrained)
+  const constrainedSlots = slotRequirements
     .filter(sr => sr.requiredCategories.length > 0)
-    .sort((a, b) => a.requiredCategories.length - b.requiredCategories.length);
+    .map(sr => ({
+      ...sr,
+      matchCount: sorted.filter(u =>
+        !assigned.has(u.user.id) &&
+        sr.requiredCategories.some(c => (u.user.userCategories ?? []).includes(c))
+      ).length,
+    }))
+    .sort((a, b) => a.matchCount - b.matchCount);
 
-  // Fill constrained slots
-  for (const sr of slotsWithReqs) {
+  // Fill constrained slots first
+  for (const sr of constrainedSlots) {
     const match = sorted.find(u =>
       !assigned.has(u.user.id) &&
       sr.requiredCategories.some(c => (u.user.userCategories ?? []).includes(c))
@@ -209,8 +220,7 @@ export function selectAutoAssignment(
     }
   }
 
-  // Fill remaining open slots
-  const remaining = numUsers - result.length;
+  // Fill remaining open slots with best available
   for (const u of sorted) {
     if (result.length >= numUsers) break;
     if (!assigned.has(u.user.id)) {
