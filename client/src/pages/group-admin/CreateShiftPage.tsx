@@ -447,6 +447,8 @@ function AssignmentStep({
   onBack: () => void;
   groupId: string;
 }) {
+  const [showSplit, setShowSplit] = useState(draft.splits.length > 0);
+
   const shiftData: AssignmentShiftData = {
     numUsers: draft.numUsers,
     requiredUserCategories: draft.requiredUserCategories,
@@ -458,26 +460,50 @@ function AssignmentStep({
 
   const { data: candidatesData, isLoading } = useAssignmentCandidates(groupId, shiftData);
   const { data: categories = [] } = useGroupCategories(groupId);
+  const autoAssign = useAutoAssignment(groupId);
 
   const allCandidates = candidatesData?.users ?? [];
+  const sortedCandidates = [...allCandidates].sort((a, b) => {
+    if (a.isFit !== b.isFit) return a.isFit ? -1 : 1;
+    return b.fitnessScore - a.fitnessScore;
+  });
 
-  // Build per-slot state: which user is assigned to each slot
-  // slotAssignments[i] = userId or ''
+  // Determine if we need per-slot view: only when slots have DIFFERENT categories
+  const slotsWithCats = draft.slotRequirements.filter(sr => sr.requiredCategories.length > 0);
+  const uniqueCatSets = new Set(slotsWithCats.map(sr => JSON.stringify([...sr.requiredCategories].sort())));
+  const needsPerSlotView = uniqueCatSets.size > 1 || (slotsWithCats.length > 0 && slotsWithCats.length < draft.numUsers);
+
+  // ── Normal mode helpers ──
+  const toggleUser = (userId: string) => {
+    const current = draft.selectedUsers;
+    if (current.includes(userId)) {
+      const updatedSplits = draft.splits.map(s => ({
+        ...s,
+        firstHalfUser: s.firstHalfUser === userId ? undefined : s.firstHalfUser,
+        secondHalfUser: s.secondHalfUser === userId ? undefined : s.secondHalfUser,
+      }));
+      onChange({ selectedUsers: current.filter(id => id !== userId), assignmentType: 'manual', splits: updatedSplits });
+    } else {
+      onChange({ selectedUsers: [...current, userId], assignmentType: 'manual' });
+    }
+  };
+
+  const handleAutoAssign = async () => {
+    const result = await autoAssign.mutateAsync(shiftData);
+    onChange({ selectedUsers: result.userIds, assignmentType: 'automatic' });
+  };
+
+  // ── Per-slot mode helpers ──
   const slotAssignments: string[] = Array.from({ length: draft.numUsers }, (_, i) => draft.selectedUsers[i] ?? '');
 
   const assignToSlot = (slotIndex: number, userId: string) => {
     const newSelected = [...draft.selectedUsers];
-
-    // If this slot already had someone, remove them
     const oldUser = slotAssignments[slotIndex];
     if (oldUser) {
       const oldIdx = newSelected.indexOf(oldUser);
       if (oldIdx >= 0) newSelected.splice(oldIdx, 1);
     }
-
-    // If clicking the same user, just deselect
     if (userId === oldUser) {
-      // Also clear from splits
       const updatedSplits = draft.splits.map(s => ({
         ...s,
         firstHalfUser: s.firstHalfUser === oldUser ? undefined : s.firstHalfUser,
@@ -486,17 +512,33 @@ function AssignmentStep({
       onChange({ selectedUsers: newSelected, assignmentType: 'manual', splits: updatedSplits });
       return;
     }
-
-    // If user is already in another slot, remove them from there first
     const existingIdx = newSelected.indexOf(userId);
     if (existingIdx >= 0) newSelected.splice(existingIdx, 1);
-
-    // Insert at slot position
     newSelected.splice(slotIndex, 0, userId);
-
     onChange({ selectedUsers: newSelected.slice(0, draft.numUsers), assignmentType: 'manual' });
   };
 
+  const getCandidatesForSlot = (slotIndex: number) => {
+    const slotReq = draft.slotRequirements.find(sr => sr.slotIndex === slotIndex);
+    const slotCats = slotReq?.requiredCategories ?? [];
+    return [...allCandidates]
+      .map(u => {
+        if (slotCats.length > 0) {
+          const userCats = u.user.userCategories ?? [];
+          const hasSlotCat = slotCats.some(c => userCats.includes(c));
+          if (!hasSlotCat) {
+            return { ...u, slotFit: false, slotScore: Math.max(0, u.fitnessScore - 40) };
+          }
+        }
+        return { ...u, slotFit: u.isFit, slotScore: u.fitnessScore };
+      })
+      .sort((a, b) => {
+        if (a.slotFit !== b.slotFit) return a.slotFit ? -1 : 1;
+        return b.slotScore - a.slotScore;
+      });
+  };
+
+  // ── Shared helpers ──
   const toggleSplit = (slotIndex: number) => {
     const existing = draft.splits.find(s => s.slotIndex === slotIndex);
     if (existing) {
@@ -512,61 +554,104 @@ function AssignmentStep({
   };
 
   const updateSplitTime = (slotIndex: number, time: string) => {
-    onChange({
-      splits: draft.splits.map(s => s.slotIndex === slotIndex ? { ...s, splitTime: time } : s),
-    });
+    onChange({ splits: draft.splits.map(s => s.slotIndex === slotIndex ? { ...s, splitTime: time } : s) });
   };
 
   const updateSplitUser = (slotIndex: number, half: 'firstHalfUser' | 'secondHalfUser', userId: string) => {
-    onChange({
-      splits: draft.splits.map(s => s.slotIndex === slotIndex ? { ...s, [half]: userId || undefined } : s),
-    });
-  };
-
-  // Sort and filter candidates per slot
-  const getCandidatesForSlot = (slotIndex: number) => {
-    const slotReq = draft.slotRequirements.find(sr => sr.slotIndex === slotIndex);
-    const slotCats = slotReq?.requiredCategories ?? [];
-
-    return [...allCandidates]
-      .map(u => {
-        // If this slot has required categories, check if user has them
-        if (slotCats.length > 0) {
-          const userCats = u.user.userCategories ?? [];
-          const hasSlotCat = slotCats.some(c => userCats.includes(c));
-          if (!hasSlotCat) {
-            // User doesn't have this slot's required category — mark as unfit for THIS slot
-            return {
-              ...u,
-              slotFit: false,
-              slotScore: Math.max(0, u.fitnessScore - 40),
-            };
-          }
-        }
-        return { ...u, slotFit: u.isFit, slotScore: u.fitnessScore };
-      })
-      .sort((a, b) => {
-        // Slot-fit first, then by score
-        if (a.slotFit !== b.slotFit) return a.slotFit ? -1 : 1;
-        return b.slotScore - a.slotScore;
-      });
+    onChange({ splits: draft.splits.map(s => s.slotIndex === slotIndex ? { ...s, [half]: userId || undefined } : s) });
   };
 
   const totalNeeded = draft.numUsers + draft.splits.length;
-  const allSlotsFilled = slotAssignments.every(u => !!u);
+  const isFull = draft.selectedUsers.length >= totalNeeded;
   const getCatNames = (ids: string[]) => ids.map(id => categories.find(c => c.id === id)?.displayName ?? id).join(', ');
 
   return (
     <div className="space-y-4">
+      {/* Header with stats + auto assign */}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <p className="text-sm text-gray-400">
-          {candidatesData?.fitUsers ?? 0} מתאימים מתוך {candidatesData?.totalUsers ?? 0} חברים
-        </p>
+        <div>
+          <p className="text-sm text-gray-400">
+            {candidatesData?.fitUsers ?? 0} מתאימים מתוך {candidatesData?.totalUsers ?? 0} חברים
+          </p>
+          <p className={`text-sm font-medium ${isFull ? 'text-green-400' : 'text-gray-400'}`}>
+            נבחרו {draft.selectedUsers.length}/{totalNeeded}
+            {draft.splits.length > 0 && <span className="text-xs text-gray-500 mr-1">({draft.numUsers} + {draft.splits.length} פיצולים)</span>}
+          </p>
+        </div>
+        {!needsPerSlotView && (
+          <button
+            onClick={handleAutoAssign}
+            disabled={autoAssign.isPending}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 rounded-lg text-sm font-medium disabled:opacity-60 shadow-[0_0_15px_rgba(249,115,22,0.3)] transition-all"
+          >
+            <Target className="w-4 h-4" />
+            {autoAssign.isPending ? 'מחשב...' : 'הקצאה אוטומטית'}
+          </button>
+        )}
       </div>
+
+      {/* Split controls (normal mode only — per-slot mode has splits inline) */}
+      {!needsPerSlotView && (
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowSplit(!showSplit)}
+            className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 transition-colors mb-2"
+          >
+            <Split className="w-4 h-4 text-purple-400" />
+            פיצול משמרות
+            <ChevronLeft className={`w-3 h-3 transition-transform ${showSplit ? 'rotate-[-90deg]' : ''}`} />
+          </button>
+          {showSplit && (
+            <GlassCard className="p-4">
+              <div className="space-y-3">
+                {Array.from({ length: draft.numUsers }, (_, i) => {
+                  const split = draft.splits.find(s => s.slotIndex === i);
+                  return (
+                    <div key={i} className="p-3 bg-white/5 rounded-lg border border-white/10">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="text-xs text-gray-400 w-16">עמדה {i + 1}</span>
+                        <button type="button" onClick={() => toggleSplit(i)} className={`text-xs px-3 py-1 rounded-full transition-all ${split ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-white/5 text-gray-400 border border-white/10 hover:border-purple-500/30'}`}>
+                          {split ? 'מפוצל' : 'פצל'}
+                        </button>
+                        {split && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-500">זמן פיצול:</span>
+                            <input type="time" value={split.splitTime} onChange={(e) => updateSplitTime(i, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
+                          </div>
+                        )}
+                      </div>
+                      {split && draft.selectedUsers.length > 0 && (
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <div>
+                            <label className="text-[10px] text-gray-500 mb-1 block">חלק א׳ ({draft.startHour} - {split.splitTime})</label>
+                            <select value={split.firstHalfUser ?? ''} onChange={(e) => updateSplitUser(i, 'firstHalfUser', e.target.value)} className="glass-input py-1.5 px-2 text-xs w-full">
+                              <option value="">בחר משתמש</option>
+                              {draft.selectedUsers.map(uid => { const u = sortedCandidates.find(c => c.user.id === uid); return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>; })}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-gray-500 mb-1 block">חלק ב׳ ({split.splitTime} - {computeEndTime(draft.startHour, draft.duration)})</label>
+                            <select value={split.secondHalfUser ?? ''} onChange={(e) => updateSplitUser(i, 'secondHalfUser', e.target.value)} className="glass-input py-1.5 px-2 text-xs w-full">
+                              <option value="">בחר משתמש</option>
+                              {draft.selectedUsers.map(uid => { const u = sortedCandidates.find(c => c.user.id === uid); return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>; })}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </GlassCard>
+          )}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-center text-gray-500 py-8">טוען מועמדים...</div>
-      ) : (
+      ) : needsPerSlotView ? (
+        /* ── Per-slot view: different categories per slot ── */
         <div className="space-y-4">
           {Array.from({ length: draft.numUsers }, (_, slotIdx) => {
             const slotReq = draft.slotRequirements.find(sr => sr.slotIndex === slotIdx);
@@ -577,83 +662,45 @@ function AssignmentStep({
 
             return (
               <GlassCard key={slotIdx} className="overflow-hidden">
-                {/* Slot header */}
                 <div className="p-3 border-b border-white/10 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-white">עמדה {slotIdx + 1}</span>
                     {slotCatNames && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
-                        {slotCatNames}
-                      </span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">{slotCatNames}</span>
                     )}
-                    {currentUser && (
-                      <span className="text-xs text-green-400">✓</span>
-                    )}
+                    {currentUser && <span className="text-xs text-green-400">✓</span>}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => toggleSplit(slotIdx)}
-                      className={`text-xs px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
-                        split
-                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                          : 'bg-white/5 text-gray-400 border border-white/10 hover:border-purple-500/30'
-                      }`}
-                    >
-                      <Split className="w-3 h-3" />
-                      {split ? 'מפוצל' : 'פצל'}
-                    </button>
-                  </div>
+                  <button type="button" onClick={() => toggleSplit(slotIdx)} className={`text-xs px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${split ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-white/5 text-gray-400 border border-white/10 hover:border-purple-500/30'}`}>
+                    <Split className="w-3 h-3" />
+                    {split ? 'מפוצל' : 'פצל'}
+                  </button>
                 </div>
-
-                {/* Split controls */}
                 {split && (
                   <div className="px-3 py-2 bg-purple-500/5 border-b border-white/10">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-xs text-gray-500">זמן פיצול:</span>
-                      <input
-                        type="time"
-                        value={split.splitTime}
-                        onChange={(e) => updateSplitTime(slotIdx, e.target.value)}
-                        className="glass-input py-1 px-2 text-xs w-28"
-                      />
+                      <input type="time" value={split.splitTime} onChange={(e) => updateSplitTime(slotIdx, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
                     </div>
                     {currentUser && (
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] text-gray-500 mb-1 block">חלק א׳ ({draft.startHour} - {split.splitTime})</label>
-                          <select
-                            value={split.firstHalfUser ?? ''}
-                            onChange={(e) => updateSplitUser(slotIdx, 'firstHalfUser', e.target.value)}
-                            className="glass-input py-1.5 px-2 text-xs w-full"
-                          >
+                          <select value={split.firstHalfUser ?? ''} onChange={(e) => updateSplitUser(slotIdx, 'firstHalfUser', e.target.value)} className="glass-input py-1.5 px-2 text-xs w-full">
                             <option value="">בחר משתמש</option>
-                            {draft.selectedUsers.map(uid => {
-                              const u = allCandidates.find(c => c.user.id === uid);
-                              return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>;
-                            })}
+                            {draft.selectedUsers.map(uid => { const u = allCandidates.find(c => c.user.id === uid); return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>; })}
                           </select>
                         </div>
                         <div>
                           <label className="text-[10px] text-gray-500 mb-1 block">חלק ב׳ ({split.splitTime} - {computeEndTime(draft.startHour, draft.duration)})</label>
-                          <select
-                            value={split.secondHalfUser ?? ''}
-                            onChange={(e) => updateSplitUser(slotIdx, 'secondHalfUser', e.target.value)}
-                            className="glass-input py-1.5 px-2 text-xs w-full"
-                          >
+                          <select value={split.secondHalfUser ?? ''} onChange={(e) => updateSplitUser(slotIdx, 'secondHalfUser', e.target.value)} className="glass-input py-1.5 px-2 text-xs w-full">
                             <option value="">בחר משתמש</option>
-                            {draft.selectedUsers.map(uid => {
-                              const u = allCandidates.find(c => c.user.id === uid);
-                              return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>;
-                            })}
+                            {draft.selectedUsers.map(uid => { const u = allCandidates.find(c => c.user.id === uid); return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>; })}
                           </select>
                         </div>
                       </div>
                     )}
                   </div>
                 )}
-
-                {/* Candidate list for this slot */}
                 <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
                   {candidates.map((u) => {
                     const isSelectedHere = currentUser === u.user.id;
@@ -670,6 +717,22 @@ function AssignmentStep({
                   })}
                 </div>
               </GlassCard>
+            );
+          })}
+        </div>
+      ) : (
+        /* ── Normal view: single candidate list ── */
+        <div className="space-y-2 max-h-72 overflow-y-auto">
+          {sortedCandidates.map((u: UserFitness) => {
+            const isSelected = draft.selectedUsers.includes(u.user.id);
+            return (
+              <CandidateRow
+                key={u.user.id}
+                u={u}
+                isSelected={isSelected}
+                disabled={false}
+                onClick={() => toggleUser(u.user.id)}
+              />
             );
           })}
         </div>
