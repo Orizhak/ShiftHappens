@@ -381,6 +381,59 @@ function RequirementsStep({
 }
 
 // ─── Step 3: Assignment ───────────────────────────────────────────────────────
+
+/** Candidate row used inside each slot's list */
+function CandidateRow({ u, isSelected, disabled, onClick }: {
+  u: UserFitness;
+  isSelected: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      onClick={disabled && !isSelected ? undefined : onClick}
+      className={`flex items-center justify-between p-2.5 rounded-lg transition-all border ${
+        isSelected
+          ? 'bg-blue-500/10 border-blue-500/30 cursor-pointer'
+          : disabled
+            ? 'bg-white/[0.02] border-white/5 opacity-30 cursor-not-allowed'
+            : u.isFit
+              ? 'bg-white/5 border-white/10 hover:bg-white/[0.08] cursor-pointer'
+              : 'bg-white/[0.02] border-white/5 opacity-50 cursor-pointer'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center ${isSelected ? 'bg-blue-500/20' : 'bg-white/10'}`}>
+          <User className={`w-3.5 h-3.5 ${isSelected ? 'text-blue-400' : 'text-gray-400'}`} />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-white">{u.user.name}</p>
+          <p className="text-[11px] text-gray-400">{u.currentPoints} נק' · {Math.round(u.weeklyHours)}ש' השבוע</p>
+          {u.unfitReasons.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {u.unfitReasons.map((reason, idx) => (
+                <span key={idx} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+                  {reason}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className={`text-xs px-2 py-0.5 rounded-full ${
+          u.fitnessScore >= 70 ? 'bg-green-500/20 text-green-300' :
+          u.fitnessScore >= 40 ? 'bg-amber-500/20 text-amber-300' :
+          'bg-red-500/20 text-red-300'
+        }`}>
+          {u.fitnessScore}
+        </span>
+        {isSelected && <CheckCircle className="w-4 h-4 text-blue-400" />}
+      </div>
+    </div>
+  );
+}
+
 function AssignmentStep({
   draft,
   onChange,
@@ -394,45 +447,54 @@ function AssignmentStep({
   onBack: () => void;
   groupId: string;
 }) {
-  const [showSplit, setShowSplit] = useState(draft.splits.length > 0);
-
   const shiftData: AssignmentShiftData = {
     numUsers: draft.numUsers,
     requiredUserCategories: draft.requiredUserCategories,
     forbiddenUserCategories: draft.forbiddenUserCategories,
-    slotRequirements: draft.slotRequirements.length > 0 ? draft.slotRequirements : undefined,
     startDate: draft.startDate,
     startHour: draft.startHour,
     duration: draft.duration,
   };
 
   const { data: candidatesData, isLoading } = useAssignmentCandidates(groupId, shiftData);
-  const autoAssign = useAutoAssignment(groupId);
+  const { data: categories = [] } = useGroupCategories(groupId);
 
-  // Sort candidates: fit first, then by fitness score descending
-  const sortedCandidates = [...(candidatesData?.users ?? [])].sort((a, b) => {
-    if (a.isFit !== b.isFit) return a.isFit ? -1 : 1;
-    return b.fitnessScore - a.fitnessScore;
-  });
+  const allCandidates = candidatesData?.users ?? [];
 
-  const handleAutoAssign = async () => {
-    const result = await autoAssign.mutateAsync(shiftData);
-    onChange({ selectedUsers: result.userIds, assignmentType: 'automatic' });
-  };
+  // Build per-slot state: which user is assigned to each slot
+  // slotAssignments[i] = userId or ''
+  const slotAssignments: string[] = Array.from({ length: draft.numUsers }, (_, i) => draft.selectedUsers[i] ?? '');
 
-  const toggleUser = (userId: string) => {
-    const current = draft.selectedUsers;
-    if (current.includes(userId)) {
-      // Also remove from any split assignments
+  const assignToSlot = (slotIndex: number, userId: string) => {
+    const newSelected = [...draft.selectedUsers];
+
+    // If this slot already had someone, remove them
+    const oldUser = slotAssignments[slotIndex];
+    if (oldUser) {
+      const oldIdx = newSelected.indexOf(oldUser);
+      if (oldIdx >= 0) newSelected.splice(oldIdx, 1);
+    }
+
+    // If clicking the same user, just deselect
+    if (userId === oldUser) {
+      // Also clear from splits
       const updatedSplits = draft.splits.map(s => ({
         ...s,
-        firstHalfUser: s.firstHalfUser === userId ? undefined : s.firstHalfUser,
-        secondHalfUser: s.secondHalfUser === userId ? undefined : s.secondHalfUser,
+        firstHalfUser: s.firstHalfUser === oldUser ? undefined : s.firstHalfUser,
+        secondHalfUser: s.secondHalfUser === oldUser ? undefined : s.secondHalfUser,
       }));
-      onChange({ selectedUsers: current.filter((id) => id !== userId), assignmentType: 'manual', splits: updatedSplits });
-    } else {
-      onChange({ selectedUsers: [...current, userId], assignmentType: 'manual' });
+      onChange({ selectedUsers: newSelected, assignmentType: 'manual', splits: updatedSplits });
+      return;
     }
+
+    // If user is already in another slot, remove them from there first
+    const existingIdx = newSelected.indexOf(userId);
+    if (existingIdx >= 0) newSelected.splice(existingIdx, 1);
+
+    // Insert at slot position
+    newSelected.splice(slotIndex, 0, userId);
+
+    onChange({ selectedUsers: newSelected.slice(0, draft.numUsers), assignmentType: 'manual' });
   };
 
   const toggleSplit = (slotIndex: number) => {
@@ -440,7 +502,6 @@ function AssignmentStep({
     if (existing) {
       onChange({ splits: draft.splits.filter(s => s.slotIndex !== slotIndex) });
     } else {
-      // Default split at midpoint
       const [h, m] = draft.startHour.split(':').map(Number);
       const halfDuration = draft.duration / 2;
       const splitH = h + Math.floor(halfDuration);
@@ -462,87 +523,113 @@ function AssignmentStep({
     });
   };
 
+  // Sort and filter candidates per slot
+  const getCandidatesForSlot = (slotIndex: number) => {
+    const slotReq = draft.slotRequirements.find(sr => sr.slotIndex === slotIndex);
+    const slotCats = slotReq?.requiredCategories ?? [];
+
+    return [...allCandidates]
+      .map(u => {
+        // If this slot has required categories, check if user has them
+        if (slotCats.length > 0) {
+          const userCats = u.user.userCategories ?? [];
+          const hasSlotCat = slotCats.some(c => userCats.includes(c));
+          if (!hasSlotCat) {
+            // User doesn't have this slot's required category — mark as unfit for THIS slot
+            return {
+              ...u,
+              slotFit: false,
+              slotScore: Math.max(0, u.fitnessScore - 40),
+            };
+          }
+        }
+        return { ...u, slotFit: u.isFit, slotScore: u.fitnessScore };
+      })
+      .sort((a, b) => {
+        // Slot-fit first, then by score
+        if (a.slotFit !== b.slotFit) return a.slotFit ? -1 : 1;
+        return b.slotScore - a.slotScore;
+      });
+  };
+
   const totalNeeded = draft.numUsers + draft.splits.length;
-  const isFull = draft.selectedUsers.length >= totalNeeded;
+  const allSlotsFilled = slotAssignments.every(u => !!u);
+  const getCatNames = (ids: string[]) => ids.map(id => categories.find(c => c.id === id)?.displayName ?? id).join(', ');
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <p className="text-sm text-gray-400">
-            {candidatesData?.fitUsers ?? 0} מתאימים מתוך {candidatesData?.totalUsers ?? 0} חברים
-          </p>
-          <p className={`text-sm font-medium ${isFull ? 'text-green-400' : 'text-gray-400'}`}>
-            נבחרו {draft.selectedUsers.length}/{totalNeeded}
-            {draft.splits.length > 0 && <span className="text-xs text-gray-500 mr-1">({draft.numUsers} + {draft.splits.length} פיצולים)</span>}
-          </p>
-        </div>
-        <button
-          onClick={handleAutoAssign}
-          disabled={autoAssign.isPending}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 rounded-lg text-sm font-medium disabled:opacity-60 shadow-[0_0_15px_rgba(249,115,22,0.3)] transition-all"
-        >
-          <Target className="w-4 h-4" />
-          {autoAssign.isPending ? 'מחשב...' : 'הקצאה אוטומטית'}
-        </button>
+        <p className="text-sm text-gray-400">
+          {candidatesData?.fitUsers ?? 0} מתאימים מתוך {candidatesData?.totalUsers ?? 0} חברים
+        </p>
       </div>
 
-      {/* Shift splitting - collapsible */}
-      <div>
-        <button
-          type="button"
-          onClick={() => setShowSplit(!showSplit)}
-          className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 transition-colors mb-2"
-        >
-          <Split className="w-4 h-4 text-purple-400" />
-          פיצול משמרות
-          <ChevronLeft className={`w-3 h-3 transition-transform ${showSplit ? 'rotate-[-90deg]' : ''}`} />
-        </button>
+      {isLoading ? (
+        <div className="text-center text-gray-500 py-8">טוען מועמדים...</div>
+      ) : (
+        <div className="space-y-4">
+          {Array.from({ length: draft.numUsers }, (_, slotIdx) => {
+            const slotReq = draft.slotRequirements.find(sr => sr.slotIndex === slotIdx);
+            const slotCatNames = slotReq ? getCatNames(slotReq.requiredCategories) : '';
+            const currentUser = slotAssignments[slotIdx];
+            const split = draft.splits.find(s => s.slotIndex === slotIdx);
+            const candidates = getCandidatesForSlot(slotIdx);
 
-        {showSplit && (
-          <GlassCard className="p-4">
-            <div className="space-y-3">
-              {Array.from({ length: draft.numUsers }, (_, i) => {
-                const split = draft.splits.find(s => s.slotIndex === i);
-                return (
-                  <div key={i} className="p-3 bg-white/5 rounded-lg border border-white/10">
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-xs text-gray-400 w-16">עמדה {i + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() => toggleSplit(i)}
-                        className={`text-xs px-3 py-1 rounded-full transition-all ${
-                          split
-                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                            : 'bg-white/5 text-gray-400 border border-white/10 hover:border-purple-500/30'
-                        }`}
-                      >
-                        {split ? 'מפוצל' : 'פצל'}
-                      </button>
-                      {split && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500">זמן פיצול:</span>
-                          <input
-                            type="time"
-                            value={split.splitTime}
-                            onChange={(e) => updateSplitTime(i, e.target.value)}
-                            className="glass-input py-1 px-2 text-xs w-28"
-                          />
-                        </div>
-                      )}
+            return (
+              <GlassCard key={slotIdx} className="overflow-hidden">
+                {/* Slot header */}
+                <div className="p-3 border-b border-white/10 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-white">עמדה {slotIdx + 1}</span>
+                    {slotCatNames && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/25">
+                        {slotCatNames}
+                      </span>
+                    )}
+                    {currentUser && (
+                      <span className="text-xs text-green-400">✓</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleSplit(slotIdx)}
+                      className={`text-xs px-2.5 py-1 rounded-full transition-all flex items-center gap-1 ${
+                        split
+                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                          : 'bg-white/5 text-gray-400 border border-white/10 hover:border-purple-500/30'
+                      }`}
+                    >
+                      <Split className="w-3 h-3" />
+                      {split ? 'מפוצל' : 'פצל'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Split controls */}
+                {split && (
+                  <div className="px-3 py-2 bg-purple-500/5 border-b border-white/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs text-gray-500">זמן פיצול:</span>
+                      <input
+                        type="time"
+                        value={split.splitTime}
+                        onChange={(e) => updateSplitTime(slotIdx, e.target.value)}
+                        className="glass-input py-1 px-2 text-xs w-28"
+                      />
                     </div>
-                    {split && draft.selectedUsers.length > 0 && (
-                      <div className="grid grid-cols-2 gap-2 mt-2">
+                    {currentUser && (
+                      <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-[10px] text-gray-500 mb-1 block">חלק א׳ ({draft.startHour} - {split.splitTime})</label>
                           <select
                             value={split.firstHalfUser ?? ''}
-                            onChange={(e) => updateSplitUser(i, 'firstHalfUser', e.target.value)}
+                            onChange={(e) => updateSplitUser(slotIdx, 'firstHalfUser', e.target.value)}
                             className="glass-input py-1.5 px-2 text-xs w-full"
                           >
                             <option value="">בחר משתמש</option>
                             {draft.selectedUsers.map(uid => {
-                              const u = sortedCandidates.find(c => c.user.id === uid);
+                              const u = allCandidates.find(c => c.user.id === uid);
                               return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>;
                             })}
                           </select>
@@ -551,12 +638,12 @@ function AssignmentStep({
                           <label className="text-[10px] text-gray-500 mb-1 block">חלק ב׳ ({split.splitTime} - {computeEndTime(draft.startHour, draft.duration)})</label>
                           <select
                             value={split.secondHalfUser ?? ''}
-                            onChange={(e) => updateSplitUser(i, 'secondHalfUser', e.target.value)}
+                            onChange={(e) => updateSplitUser(slotIdx, 'secondHalfUser', e.target.value)}
                             className="glass-input py-1.5 px-2 text-xs w-full"
                           >
                             <option value="">בחר משתמש</option>
                             {draft.selectedUsers.map(uid => {
-                              const u = sortedCandidates.find(c => c.user.id === uid);
+                              const u = allCandidates.find(c => c.user.id === uid);
                               return <option key={uid} value={uid}>{u?.user.name ?? uid}</option>;
                             })}
                           </select>
@@ -564,75 +651,25 @@ function AssignmentStep({
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          </GlassCard>
-        )}
-      </div>
+                )}
 
-      {isLoading ? (
-        <div className="text-center text-gray-500 py-8">טוען מועמדים...</div>
-      ) : (
-        <div className="space-y-2 max-h-72 overflow-y-auto">
-          {sortedCandidates.map((u: UserFitness) => {
-            const isSelected = draft.selectedUsers.includes(u.user.id);
-            return (
-              <div
-                key={u.user.id}
-                onClick={() => toggleUser(u.user.id)}
-                className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-all border ${
-                  isSelected
-                    ? 'bg-blue-500/10 border-blue-500/30 shadow-[0_0_10px_rgba(59,130,246,0.1)]'
-                    : u.isFit
-                      ? 'bg-white/5 border-white/10 hover:bg-white/[0.08]'
-                      : 'bg-white/[0.02] border-white/5 opacity-50'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isSelected ? 'bg-blue-500/20' : 'bg-white/10'}`}>
-                    <User className={`w-4 h-4 ${isSelected ? 'text-blue-400' : 'text-gray-400'}`} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-white">{u.user.name}</p>
-                    <p className="text-xs text-gray-400">{u.currentPoints} נק' · {Math.round(u.weeklyHours)}ש' השבוע</p>
-                    {draft.slotRequirements.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {u.matchedSlots && u.matchedSlots.length > 0 ? (
-                          u.matchedSlots.map((slot) => (
-                            <span key={slot} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20">
-                              מתאים לעמדה {slot + 1}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                            עמדה כללית בלבד
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {u.unfitReasons.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {u.unfitReasons.map((reason, idx) => (
-                          <span key={idx} className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
-                            {reason}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                {/* Candidate list for this slot */}
+                <div className="p-2 space-y-1 max-h-48 overflow-y-auto">
+                  {candidates.map((u) => {
+                    const isSelectedHere = currentUser === u.user.id;
+                    const isSelectedElsewhere = !isSelectedHere && slotAssignments.includes(u.user.id);
+                    return (
+                      <CandidateRow
+                        key={u.user.id}
+                        u={{ ...u, isFit: u.slotFit, fitnessScore: u.slotScore }}
+                        isSelected={isSelectedHere}
+                        disabled={isSelectedElsewhere}
+                        onClick={() => assignToSlot(slotIdx, u.user.id)}
+                      />
+                    );
+                  })}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    u.fitnessScore >= 70 ? 'bg-green-500/20 text-green-300' :
-                    u.fitnessScore >= 40 ? 'bg-amber-500/20 text-amber-300' :
-                    'bg-red-500/20 text-red-300'
-                  }`}>
-                    {u.fitnessScore}
-                  </span>
-                  {isSelected && <CheckCircle className="w-4 h-4 text-blue-400" />}
-                </div>
-              </div>
+              </GlassCard>
             );
           })}
         </div>

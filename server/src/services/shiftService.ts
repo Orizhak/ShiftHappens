@@ -98,58 +98,19 @@ export function calculateUserFitness(
     fitnessScore -= 30;
   }
 
-  // ── Category checks ──────────────────────────────────────────────────────
+  // Category checks — global only (per-slot is handled client-side)
   const userCatIds = user.userCategories ?? [];
   const required = shiftData.requiredUserCategories ?? [];
   const forbidden = shiftData.forbiddenUserCategories ?? [];
-  const slotReqs = shiftData.slotRequirements ?? [];
 
-  // Global forbidden — hard block
-  const hasForbidden = forbidden.some((c) => userCatIds.includes(c));
-  if (hasForbidden) {
-    unfitReasons.push('יש קטגוריות אסורות');
-    fitnessScore -= 60;
-  }
-
-  // Global required — user must have at least one
-  const failsGlobalRequired = required.length > 0 && !required.some((c) => userCatIds.includes(c));
-  if (failsGlobalRequired) {
+  if (required.length > 0 && !required.some((c) => userCatIds.includes(c))) {
     unfitReasons.push('חסרות קטגוריות נדרשות');
     fitnessScore -= 40;
   }
 
-  // Per-slot categories — determine which specific slots this user can fill
-  // Build list of all slots (0..numUsers-1), figure out which ones have constraints
-  const constrainedSlots = slotReqs.filter(sr => sr.requiredCategories.length > 0);
-
-  // Which constrained slots does this user match?
-  const matchedSlots: number[] = [];
-  for (const sr of constrainedSlots) {
-    if (sr.requiredCategories.some(c => userCatIds.includes(c))) {
-      matchedSlots.push(sr.slotIndex);
-    }
-  }
-
-  // Slots without specific requirements (open to anyone who passes global checks)
-  const constrainedSlotIndices = new Set(constrainedSlots.map(sr => sr.slotIndex));
-  const openSlotCount = shiftData.numUsers - constrainedSlots.length;
-  const canFillOpenSlot = openSlotCount > 0;
-  const canFillConstrainedSlot = matchedSlots.length > 0;
-
-  // If user matches constrained slots → bonus; otherwise small penalty
-  if (constrainedSlots.length > 0) {
-    if (canFillConstrainedSlot) {
-      fitnessScore += 10;
-    } else if (canFillOpenSlot) {
-      // Can only fill open slots — lower priority than slot-matched users
-      fitnessScore -= 10;
-    }
-  }
-
-  // If user can't fill ANY slot (no open slots + no matching constrained slots)
-  if (!canFillOpenSlot && !canFillConstrainedSlot && constrainedSlots.length > 0) {
-    unfitReasons.push('לא מתאים לאף עמדה');
-    fitnessScore -= 40;
+  if (forbidden.some((c) => userCatIds.includes(c))) {
+    unfitReasons.push('יש קטגוריות אסורות');
+    fitnessScore -= 60;
   }
 
   // Points fairness penalty
@@ -158,9 +119,7 @@ export function calculateUserFitness(
   const isFit =
     fitnessScore >= 50 &&
     !hasSameDayShift &&
-    !hasForbidden &&
-    !failsGlobalRequired &&
-    (constrainedSlots.length === 0 || canFillOpenSlot || canFillConstrainedSlot);
+    !forbidden.some((c) => userCatIds.includes(c));
 
   return {
     user,
@@ -171,14 +130,12 @@ export function calculateUserFitness(
     conflictingShift,
     weeklyHours,
     currentPoints,
-    matchedSlots,
   };
 }
 
 export function selectAutoAssignment(
   candidates: UserFitness[],
-  numUsers: number,
-  slotRequirements?: { slotIndex: number; requiredCategories: string[] }[]
+  numUsers: number
 ): string[] {
   const fit = candidates.filter((u) => u.isFit);
   const sorted = [...fit].sort((a, b) => {
@@ -186,50 +143,8 @@ export function selectAutoAssignment(
     return a.currentPoints - b.currentPoints;
   });
 
-  // If no per-slot requirements, simple top-N selection
-  if (!slotRequirements || slotRequirements.length === 0) {
-    if (sorted.length <= numUsers) return sorted.map((u) => u.user.id);
-    return sorted.slice(0, numUsers).map((u) => u.user.id);
-  }
-
-  // Slot-aware assignment: fill constrained slots first, then open slots
-  const assigned = new Set<string>();
-  const result: string[] = [];
-
-  // Sort constrained slots: fewest matching candidates first (most constrained)
-  const constrainedSlots = slotRequirements
-    .filter(sr => sr.requiredCategories.length > 0)
-    .map(sr => ({
-      ...sr,
-      matchCount: sorted.filter(u =>
-        !assigned.has(u.user.id) &&
-        sr.requiredCategories.some(c => (u.user.userCategories ?? []).includes(c))
-      ).length,
-    }))
-    .sort((a, b) => a.matchCount - b.matchCount);
-
-  // Fill constrained slots first
-  for (const sr of constrainedSlots) {
-    const match = sorted.find(u =>
-      !assigned.has(u.user.id) &&
-      sr.requiredCategories.some(c => (u.user.userCategories ?? []).includes(c))
-    );
-    if (match) {
-      assigned.add(match.user.id);
-      result.push(match.user.id);
-    }
-  }
-
-  // Fill remaining open slots with best available
-  for (const u of sorted) {
-    if (result.length >= numUsers) break;
-    if (!assigned.has(u.user.id)) {
-      assigned.add(u.user.id);
-      result.push(u.user.id);
-    }
-  }
-
-  return result;
+  if (sorted.length <= numUsers) return sorted.map((u) => u.user.id);
+  return sorted.slice(0, numUsers).map((u) => u.user.id);
 }
 
 /** Full pipeline: load users + shifts + points, compute fitness for each user */
@@ -262,7 +177,7 @@ export async function performAutomaticAssignment(
   shiftData: AssignmentShiftData
 ): Promise<string[]> {
   const { users } = await getUsersForAssignment(groupId, shiftData);
-  return selectAutoAssignment(users, shiftData.numUsers, shiftData.slotRequirements);
+  return selectAutoAssignment(users, shiftData.numUsers);
 }
 
 /** Replaces one user in an existing assignment */
