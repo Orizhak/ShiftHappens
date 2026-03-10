@@ -89,6 +89,7 @@ export function UserCalendarPage() {
   // Dialog state
   const [dialogShift, setDialogShift] = useState<Shift | null>(null);
   const [dialogRequest, setDialogRequest] = useState<Request | null>(null);
+  const [dayShiftsDialog, setDayShiftsDialog] = useState<Shift[] | null>(null);
 
   // Drag-to-select state
   const [dragStart, setDragStart] = useState<number | null>(null);
@@ -323,8 +324,10 @@ export function UserCalendarPage() {
                             setDragStart(null);
                             setDragEnd(null);
                             setDragMoved(false);
-                            if (dayShifts.length > 0) {
+                            if (dayShifts.length === 1) {
                               setDialogShift(dayShifts[0]);
+                            } else if (dayShifts.length > 1) {
+                              setDayShiftsDialog(dayShifts);
                             } else if (userRequests.length > 0) {
                               setDialogRequest(userRequests[0]);
                             } else {
@@ -350,8 +353,10 @@ export function UserCalendarPage() {
                           setDragStart(null);
                           setDragEnd(null);
                           setDragMoved(false);
-                          if (dayShifts.length > 0) {
+                          if (dayShifts.length === 1) {
                             setDialogShift(dayShifts[0]);
+                          } else if (dayShifts.length > 1) {
+                            setDayShiftsDialog(dayShifts);
                           } else if (userRequests.length > 0) {
                             setDialogRequest(userRequests[0]);
                           }
@@ -546,6 +551,43 @@ export function UserCalendarPage() {
           </div>
         )}
       </div>
+
+      {/* Day shifts picker (multiple shifts on same day) */}
+      {dayShiftsDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setDayShiftsDialog(null)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative w-full max-w-md glass-card border-blue-500/20 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-white mb-4">משמרות ביום {new Date(dayShiftsDialog[0].startDate).toLocaleDateString('he-IL')}</h2>
+            <div className="space-y-2">
+              {dayShiftsDialog.map((s) => {
+                const dotColor = getGroupDotColor(s.groupId, uniqueGroupIds);
+                return (
+                  <GlassCard
+                    key={s.id}
+                    hover
+                    className="p-3 cursor-pointer"
+                    onClick={() => { setDayShiftsDialog(null); setDialogShift(s); }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                          <h3 className="text-sm font-medium text-white">{s.displayName}</h3>
+                          <StatusBadge type="shift-status" value={s.status} />
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {formatTimeRange(new Date(s.startDate), new Date(s.endDate))}
+                          {s.location && ` · ${s.location}`}
+                        </p>
+                      </div>
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Shift Detail Dialog */}
       <ShiftDetailDialog

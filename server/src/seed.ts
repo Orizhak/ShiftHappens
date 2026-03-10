@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { db } from './firebase/admin';
 import { collections } from './firebase/db';
 import bcrypt from 'bcryptjs';
-import { Gender, ShiftStatus, RequestType, AssignmentType, MultiplierType } from './types';
+import { Gender, ShiftStatus, RequestType } from './types';
 
 function daysFromNow(days: number): Date {
   const d = new Date();
@@ -13,7 +13,7 @@ function daysFromNow(days: number): Date {
 // ─── Drop all collections ─────────────────────────────────────────────────────
 
 async function dropCollections() {
-  const names = ['users', 'groups', 'shifts', 'shiftAssignments', 'userGroupPoints', 'userCategories', 'requests', 'templates'] as const;
+  const names = ['users', 'groups', 'shifts', 'userGroupPoints', 'userCategories', 'requests', 'templates'] as const;
   for (const name of names) {
     const snap = await collections[name].get();
     for (let i = 0; i < snap.docs.length; i += 500) {
@@ -43,9 +43,9 @@ async function main() {
 
   // ── 1. User categories ──────────────────────────────────────────────────────
   const [catOfficerId, catSergeantId, catSoldierId] = await Promise.all([
-    collections.userCategories.add({ displayName: 'קצין',       pointsMultiplier: 1.5, multiplierType: MultiplierType.User, createdAt: new Date() }).then(r => r.id),
-    collections.userCategories.add({ displayName: 'סמל',        pointsMultiplier: 1.2, multiplierType: MultiplierType.User, createdAt: new Date() }).then(r => r.id),
-    collections.userCategories.add({ displayName: 'חייל בסיסי', pointsMultiplier: 1.0, multiplierType: MultiplierType.User, createdAt: new Date() }).then(r => r.id),
+    collections.userCategories.add({ displayName: 'קצין',       pointsMultiplier: 1.5, createdAt: new Date() }).then(r => r.id),
+    collections.userCategories.add({ displayName: 'סמל',        pointsMultiplier: 1.2, createdAt: new Date() }).then(r => r.id),
+    collections.userCategories.add({ displayName: 'חייל בסיסי', pointsMultiplier: 1.0, createdAt: new Date() }).then(r => r.id),
   ]);
   console.log('  ✓ userCategories');
 
@@ -188,34 +188,7 @@ async function main() {
   );
   console.log('  ✓ shifts');
 
-  // ── 5. Shift assignments (finished shifts only) ─────────────────────────────
-  // shiftDefs indices: sw=0-7, ka=8-15, gu=16-23
-  const assignmentDefs = [
-    { shiftIdx: 0,  userId: user1Id }, { shiftIdx: 0,  userId: user2Id },
-    { shiftIdx: 1,  userId: user2Id }, { shiftIdx: 1,  userId: user5Id },
-    { shiftIdx: 2,  userId: user1Id }, { shiftIdx: 2,  userId: user5Id },
-    { shiftIdx: 3,  userId: user1Id }, { shiftIdx: 3,  userId: user2Id }, { shiftIdx: 3, userId: user5Id },
-    { shiftIdx: 8,  userId: user1Id }, { shiftIdx: 8,  userId: user3Id },
-    { shiftIdx: 9,  userId: user3Id },
-    { shiftIdx: 10, userId: user1Id }, { shiftIdx: 10, userId: user3Id },
-    { shiftIdx: 11, userId: user3Id },
-    { shiftIdx: 16, userId: user3Id }, { shiftIdx: 16, userId: user4Id }, { shiftIdx: 16, userId: user5Id },
-    { shiftIdx: 17, userId: user4Id }, { shiftIdx: 17, userId: user5Id },
-    { shiftIdx: 18, userId: user3Id }, { shiftIdx: 18, userId: user4Id },
-    { shiftIdx: 19, userId: user5Id },
-  ];
-
-  const assignBatch = db.batch();
-  assignmentDefs.forEach(({ shiftIdx, userId }) => {
-    assignBatch.set(collections.shiftAssignments.doc(), {
-      shiftId: shiftIds[shiftIdx], userId,
-      assignedBy: AssignmentType.Auto, assignedAt: new Date(),
-    });
-  });
-  await assignBatch.commit();
-  console.log('  ✓ shiftAssignments');
-
-  // ── 6. User group points (only groups with hasPointsTracking) ───────────────
+  // ── 5. User group points (only groups with hasPointsTracking) ───────────────
   const pointsBatch = db.batch();
   [
     { userId: user1Id, groupId: groupSoftwareId, count: 14 },

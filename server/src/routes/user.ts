@@ -9,6 +9,7 @@ import {
   getUserRankInGroup,
   getGroupUserStats,
 } from '../services/userService';
+import { completeExpiredShifts } from '../services/shiftService';
 import {
   getRequestsByUserId,
   createRequest,
@@ -21,10 +22,16 @@ const router = Router();
 // All user routes require authentication
 router.use(authenticate);
 
+/** Complete expired shifts for all groups the user belongs to */
+async function completeUserGroupShifts(userGroups: { groupId: string }[] = []) {
+  await Promise.all(userGroups.map((g) => completeExpiredShifts(g.groupId)));
+}
+
 // ─── Shifts ─────────────────────────────────────────────────────────────────
 // GET /api/user/shifts/upcoming
 router.get('/shifts/upcoming', async (req, res) => {
   try {
+    await completeUserGroupShifts(req.user!.groups);
     const adminGroupIds = req.user!.groups?.filter((g) => g.isAdmin).map((g) => g.groupId) ?? [];
     const shifts = await getUpcomingShiftsForUser(req.user!.id, adminGroupIds);
     res.json({ shifts });
@@ -36,6 +43,7 @@ router.get('/shifts/upcoming', async (req, res) => {
 // GET /api/user/shifts
 router.get('/shifts', async (req, res) => {
   try {
+    await completeUserGroupShifts(req.user!.groups);
     const adminGroupIds = req.user!.groups?.filter((g) => g.isAdmin).map((g) => g.groupId) ?? [];
     const shifts = await getAllShiftsForUser(req.user!.id, adminGroupIds);
     res.json({ shifts });
@@ -66,6 +74,7 @@ router.get('/groups', async (req, res) => {
 // GET /api/user/points
 router.get('/points', async (req, res) => {
   try {
+    await completeUserGroupShifts(req.user!.groups);
     const adminGroupIds = new Set(
       req.user!.groups?.filter((g) => g.isAdmin).map((g) => g.groupId) ?? []
     );
@@ -80,6 +89,7 @@ router.get('/points', async (req, res) => {
 // GET /api/user/points/leaderboard/:groupId
 router.get('/points/leaderboard/:groupId', async (req, res) => {
   try {
+    await completeExpiredShifts(req.params.groupId);
     const board = await getGroupLeaderboard(req.params.groupId);
     res.json({ leaderboard: board });
   } catch (err: any) {

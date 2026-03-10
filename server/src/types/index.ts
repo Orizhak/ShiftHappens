@@ -4,16 +4,6 @@ export enum RequestType {
   Prefer,
 }
 
-export enum AssignmentType {
-  Auto = 1,
-  Manual,
-}
-
-export enum MultiplierType {
-  User = 1,
-  Shift,
-}
-
 export enum Gender {
   Male = 1,
   Female,
@@ -77,14 +67,6 @@ export interface Shift {
   createdAt: Date;
 }
 
-export interface ShiftAssignment {
-  id: string;
-  shiftId: string;
-  userId: string;
-  assignedBy: AssignmentType;
-  assignedAt: Date;
-}
-
 export interface Request {
   id: string;
   userId: string;
@@ -111,7 +93,6 @@ export interface UserCategory {
   id: string;
   displayName: string;
   pointsMultiplier: number;
-  multiplierType: MultiplierType;
   createdAt: Date;
 }
 

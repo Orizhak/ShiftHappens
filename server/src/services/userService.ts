@@ -1,5 +1,5 @@
 import { collections, convertTimestamps } from '../firebase/db';
-import { User, UserGroupPoints, Group, Shift, ShiftStatus } from '../types';
+import { User, UserGroupPoints, Group, Shift, ShiftStatus, UserCategory } from '../types';
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export async function getUserById(id: string): Promise<User | null> {
@@ -139,6 +139,69 @@ export async function getAllShiftsForUser(
     })
     .filter((s) => !adminSet.has(s.groupId))
     .sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+}
+
+/** Award points to all users assigned to a completed shift */
+export async function awardPointsForShift(shift: Shift): Promise<void> {
+  if (!shift.users || shift.users.length === 0) return;
+
+  const start = shift.startDate instanceof Date ? shift.startDate : new Date(shift.startDate as any);
+  const end = shift.endDate instanceof Date ? shift.endDate : new Date(shift.endDate as any);
+  const durationHours = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+  if (durationHours <= 0 || isNaN(durationHours)) return;
+
+  // Load categories for multiplier support
+  const catSnap = await collections.userCategories.get();
+  const categories = catSnap.docs.map((d) =>
+    convertTimestamps<UserCategory>({ id: d.id, ...d.data() })
+  );
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+
+  // Load user docs to get their categories
+  const userDocs = await Promise.all(
+    shift.users.map((uid) => collections.users.doc(uid).get())
+  );
+
+  for (let i = 0; i < shift.users.length; i++) {
+    const userId = shift.users[i];
+    const userDoc = userDocs[i];
+    if (!userDoc.exists) continue;
+
+    const userData = userDoc.data() as any;
+    const userCatIds: string[] = userData.userCategories ?? [];
+
+    // Calculate multiplier: highest applicable multiplier from user's categories
+    let maxMultiplier = 1;
+    for (const catId of userCatIds) {
+      const cat = catMap.get(catId);
+      if (cat && cat.pointsMultiplier > maxMultiplier) {
+        maxMultiplier = cat.pointsMultiplier;
+      }
+    }
+
+    const basePoints = shift.pointsPerHour * durationHours;
+    const finalPoints = Math.round(basePoints * maxMultiplier);
+
+    // Upsert userGroupPoints
+    const snap = await collections.userGroupPoints
+      .where('userId', '==', userId)
+      .where('groupId', '==', shift.groupId)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      await collections.userGroupPoints.add({
+        userId,
+        groupId: shift.groupId,
+        count: finalPoints,
+        lastDate: new Date(),
+      });
+    } else {
+      const doc = snap.docs[0];
+      const current = (doc.data() as any).count ?? 0;
+      await doc.ref.update({ count: current + finalPoints, lastDate: new Date() });
+    }
+  }
 }
 
 /** Hours worked this month and this week in a group */

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { groupAdminApi } from '@/api/groupAdmin';
+import { toast } from 'sonner';
 
 export function useGroupRequests(groupId: string) {
   return useQuery({
@@ -13,6 +14,10 @@ export function useDeleteGroupRequest(groupId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (requestId: string) => groupAdminApi.deleteGroupRequest(groupId, requestId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'requests'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'requests'] });
+      toast.success('הבקשה נמחקה');
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 }

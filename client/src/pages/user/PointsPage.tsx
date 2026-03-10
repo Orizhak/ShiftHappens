@@ -4,6 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useUserPoints } from '@/hooks/user/usePoints';
 import { useNonAdminGroups } from '@/hooks/user/useGroups';
 import { useGroupLeaderboard, useUserRank } from '@/hooks/user/usePoints';
+import { useQueries } from '@tanstack/react-query';
+import { userApi } from '@/api/user';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatCard } from '@/components/ui/StatCard';
@@ -81,9 +83,25 @@ export function UserPointsPage() {
 
   const activeGroupId = selectedGroupId || groups[0]?.id || '';
 
+  // Fetch ranks for all groups
+  const rankQueries = useQueries({
+    queries: groups.map((g) => ({
+      queryKey: ['user', 'rank', g.id],
+      queryFn: () => userApi.getRank(g.id).then((r) => r.rank),
+      enabled: !!g.id,
+    })),
+  });
+
   // Compute KPIs
   const totalPoints = useMemo(() => points.reduce((sum, p) => sum + p.count, 0), [points]);
   const activeGroups = groups.length;
+
+  const bestRank = useMemo(() => {
+    const ranks = rankQueries
+      .map((q) => q.data)
+      .filter((r): r is number => typeof r === 'number' && r > 0);
+    return ranks.length > 0 ? Math.min(...ranks) : null;
+  }, [rankQueries]);
 
   return (
     <div className="page-bg" dir="rtl">
@@ -113,7 +131,7 @@ export function UserPointsPage() {
           <StatCard
             accent="green"
             label="דירוג הטוב ביותר"
-            value={pointsLoading ? '...' : (points.length > 0 ? `#-` : '-')}
+            value={pointsLoading ? '...' : (bestRank !== null ? `#${bestRank}` : '-')}
             subtitle="מבין כל הקבוצות"
             icon={<Award className="w-5 h-5" />}
           />

@@ -6,9 +6,10 @@ import {
   UserFitness,
   UserCategory,
   AssignmentShiftData,
-  AssignmentType,
+  Request as UserRequest,
+  RequestType,
 } from '../types';
-import { getPointsByGroupId, getUsersByGroupId } from './userService';
+import { getPointsByGroupId, getUsersByGroupId, awardPointsForShift } from './userService';
 
 // ─── Shift CRUD ───────────────────────────────────────────────────────────────
 export async function getShiftsByGroupId(groupId: string): Promise<Shift[]> {
@@ -38,12 +39,38 @@ export async function deleteShift(id: string): Promise<void> {
   await collections.shifts.doc(id).delete();
 }
 
+// ─── Shift Auto-Completion ────────────────────────────────────────────────────
+/** Lazy evaluation: find Active shifts past endDate, mark Finished, award points */
+export async function completeExpiredShifts(groupId: string): Promise<number> {
+  const snap = await collections.shifts
+    .where('groupId', '==', groupId)
+    .where('status', '==', ShiftStatus.Active)
+    .get();
+
+  const now = new Date();
+  let completed = 0;
+
+  for (const doc of snap.docs) {
+    const shift = convertTimestamps<Shift>({ id: doc.id, ...doc.data() });
+    const endDate = shift.endDate instanceof Date ? shift.endDate : new Date(shift.endDate as any);
+
+    if (endDate < now) {
+      await doc.ref.update({ status: ShiftStatus.Finished });
+      await awardPointsForShift(shift);
+      completed++;
+    }
+  }
+
+  return completed;
+}
+
 // ─── Assignment algorithm ─────────────────────────────────────────────────────
 export function calculateUserFitness(
   user: User,
   shiftData: AssignmentShiftData,
   existingShifts: Shift[],
-  currentPoints: number
+  currentPoints: number,
+  userRequests: UserRequest[] = []
 ): UserFitness {
   const unfitReasons: string[] = [];
   let fitnessScore = 100;
@@ -52,6 +79,21 @@ export function calculateUserFitness(
   let weeklyHours = 0;
 
   const shiftDate = new Date(shiftData.startDate);
+
+  // Request checks (Exclude/Prefer)
+  for (const req of userRequests) {
+    const reqStart = req.startDate instanceof Date ? req.startDate : new Date(req.startDate as any);
+    const reqEnd = req.endDate instanceof Date ? req.endDate : new Date(req.endDate as any);
+
+    if (shiftDate >= reqStart && shiftDate <= reqEnd) {
+      if (req.type === RequestType.Exclude) {
+        unfitReasons.push('יש בקשת פטור לתאריך זה');
+        fitnessScore -= 80;
+      } else if (req.type === RequestType.Prefer) {
+        fitnessScore += 10;
+      }
+    }
+  }
 
   // Same-day conflict
   const sameDayShifts = existingShifts.filter((shift) => {
@@ -116,9 +158,16 @@ export function calculateUserFitness(
   // Points fairness penalty
   fitnessScore -= Math.min(30, Math.floor(currentPoints / 5));
 
+  const hasExcludeRequest = userRequests.some((req) => {
+    const reqStart = req.startDate instanceof Date ? req.startDate : new Date(req.startDate as any);
+    const reqEnd = req.endDate instanceof Date ? req.endDate : new Date(req.endDate as any);
+    return req.type === RequestType.Exclude && shiftDate >= reqStart && shiftDate <= reqEnd;
+  });
+
   const isFit =
     fitnessScore >= 50 &&
     !hasSameDayShift &&
+    !hasExcludeRequest &&
     !forbidden.some((c) => userCatIds.includes(c));
 
   return {
@@ -147,7 +196,7 @@ export function selectAutoAssignment(
   return sorted.slice(0, numUsers).map((u) => u.user.id);
 }
 
-/** Full pipeline: load users + shifts + points, compute fitness for each user */
+/** Full pipeline: load users + shifts + points + requests, compute fitness for each user */
 export async function getUsersForAssignment(
   groupId: string,
   shiftData: AssignmentShiftData
@@ -158,10 +207,29 @@ export async function getUsersForAssignment(
     getPointsByGroupId(groupId),
   ]);
 
+  // Load all requests for group users in batches
+  const userIds = users.map((u) => u.id);
+  const allRequests: UserRequest[] = [];
+  for (let i = 0; i < userIds.length; i += 30) {
+    const batch = userIds.slice(i, i + 30);
+    const snap = await collections.requests.where('userId', 'in', batch).get();
+    snap.docs.forEach((d) => {
+      allRequests.push(convertTimestamps<UserRequest>({ id: d.id, ...d.data() }));
+    });
+  }
+
+  // Group requests by userId
+  const requestsByUser = new Map<string, UserRequest[]>();
+  for (const req of allRequests) {
+    const list = requestsByUser.get(req.userId) ?? [];
+    list.push(req);
+    requestsByUser.set(req.userId, list);
+  }
+
   const pointsMap = new Map(pointsRecords.map((p) => [p.userId, p.count]));
 
   const fitnessResults = users.map((u) =>
-    calculateUserFitness(u, shiftData, groupShifts, pointsMap.get(u.id) ?? 0)
+    calculateUserFitness(u, shiftData, groupShifts, pointsMap.get(u.id) ?? 0, requestsByUser.get(u.id) ?? [])
   );
 
   return {

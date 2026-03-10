@@ -10,8 +10,9 @@ import {
   getUsersForAssignment,
   performAutomaticAssignment,
   replaceUserInAssignment,
+  completeExpiredShifts,
 } from '../services/shiftService';
-import { getUsersByGroupId, updateUser, getAllGroups, getGroupLeaderboard, getAllUsers } from '../services/userService';
+import { getUsersByGroupId, updateUser, getAllGroups, getGroupLeaderboard, getAllUsers, awardPointsForShift } from '../services/userService';
 import { collections, convertTimestamps } from '../firebase/db';
 import { UserCategory, ShiftStatus } from '../types';
 
@@ -27,6 +28,7 @@ router.use(authenticate, requireGroupAdmin);
 // GET /api/group-admin/:groupId/shifts
 router.get('/shifts', async (req: Request<GroupParams>, res) => {
   try {
+    await completeExpiredShifts(req.params.groupId);
     const shifts = await getShiftsByGroupId(req.params.groupId);
     res.json({ shifts });
   } catch (err: any) {
@@ -48,7 +50,7 @@ router.get('/shifts/:shiftId', async (req, res) => {
 // POST /api/group-admin/:groupId/shifts
 router.post('/shifts', async (req: Request<GroupParams>, res) => {
   try {
-    const shiftData = { ...req.body, groupId: req.params.groupId };
+    const shiftData = { ...req.body, groupId: req.params.groupId, createdAt: new Date() };
     const shift = await createShift(shiftData);
     res.status(201).json({ shift });
   } catch (err: any) {
@@ -59,7 +61,35 @@ router.post('/shifts', async (req: Request<GroupParams>, res) => {
 // PATCH /api/group-admin/:groupId/shifts/:shiftId
 router.patch('/shifts/:shiftId', async (req, res) => {
   try {
-    await updateShift(req.params.shiftId, req.body);
+    const { status: newStatus, ...otherData } = req.body;
+
+    // Status transition validation
+    if (newStatus !== undefined) {
+      const shift = await getShiftById(req.params.shiftId);
+      if (!shift) { res.status(404).json({ message: 'משמרת לא נמצאה' }); return; }
+
+      const currentStatus = shift.status;
+      const validTransitions: Record<number, number[]> = {
+        [ShiftStatus.Active]: [ShiftStatus.Cancelled, ShiftStatus.Finished],
+        [ShiftStatus.Cancelled]: [ShiftStatus.Active],
+        [ShiftStatus.Finished]: [], // terminal — cannot undo
+      };
+
+      if (!validTransitions[currentStatus]?.includes(newStatus)) {
+        res.status(400).json({ message: 'מעבר סטטוס לא חוקי' });
+        return;
+      }
+
+      await updateShift(req.params.shiftId, { ...otherData, status: newStatus });
+
+      // Award points on manual finish
+      if (newStatus === ShiftStatus.Finished) {
+        await awardPointsForShift(shift);
+      }
+    } else {
+      await updateShift(req.params.shiftId, otherData);
+    }
+
     res.json({ ok: true });
   } catch (err: any) {
     res.status(400).json({ message: err.message });
@@ -139,9 +169,35 @@ router.patch('/users/:userId/role', async (req: Request<GroupParams & { userId: 
     const groups: any[] = user.groups ?? [];
 
     if (action === 'removeFromGroup') {
+      // 1. Remove user from group membership
       await updateUser(userId, {
         groups: groups.filter((g: any) => g.groupId !== groupId),
       } as any);
+
+      // 2. Remove user from future Active shifts in this group
+      const shiftsSnap = await collections.shifts
+        .where('groupId', '==', groupId)
+        .where('status', '==', ShiftStatus.Active)
+        .get();
+
+      const now = new Date();
+      for (const shiftDoc of shiftsSnap.docs) {
+        const shiftData = shiftDoc.data() as any;
+        const startDate = shiftData.startDate?.toDate ? shiftData.startDate.toDate() : new Date(shiftData.startDate);
+        if (startDate > now && shiftData.users?.includes(userId)) {
+          const updatedUsers = shiftData.users.filter((id: string) => id !== userId);
+          await shiftDoc.ref.update({ users: updatedUsers });
+        }
+      }
+
+      // 3. Delete userGroupPoints for this user+group
+      const pointsSnap = await collections.userGroupPoints
+        .where('userId', '==', userId)
+        .where('groupId', '==', groupId)
+        .get();
+      for (const doc of pointsSnap.docs) {
+        await doc.ref.delete();
+      }
     } else {
       const updated = groups.map((g: any) =>
         g.groupId === groupId ? { ...g, isAdmin: action === 'makeAdmin' } : g
@@ -207,6 +263,7 @@ router.post('/users/add', async (req: Request<GroupParams>, res) => {
 // GET /api/group-admin/:groupId/leaderboard
 router.get('/leaderboard', async (req: Request<GroupParams>, res) => {
   try {
+    await completeExpiredShifts(req.params.groupId);
     const board = await getGroupLeaderboard(req.params.groupId);
     const safe = board.map(({ user: { password: _pw, ...u }, points }) => ({ user: u, points }));
     res.json({ leaderboard: safe });

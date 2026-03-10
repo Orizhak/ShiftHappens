@@ -29,9 +29,15 @@ export function useUpdateShift(groupId: string) {
   return useMutation({
     mutationFn: ({ shiftId, data }: { shiftId: string; data: Partial<Shift> }) =>
       groupAdminApi.updateShift(groupId, shiftId, data),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'shifts'] });
-      toast.success('המשמרת עודכנה');
+      // If status changed (finish/cancel), also invalidate points-related queries
+      if (variables.data.status !== undefined) {
+        qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'leaderboard'] });
+        qc.invalidateQueries({ queryKey: ['user', 'points'] });
+        qc.invalidateQueries({ queryKey: ['user', 'leaderboard'] });
+        qc.invalidateQueries({ queryKey: ['user', 'rank'] });
+      }
     },
     onError: (err: Error) => toast.error(err.message),
   });

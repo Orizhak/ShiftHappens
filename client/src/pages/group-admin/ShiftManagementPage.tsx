@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Calendar, List, Trash2, XCircle, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Calendar, List, Trash2, XCircle, CheckCircle, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useGroupShifts, useUpdateShift, useDeleteShift } from '@/hooks/groupAdmin/useGroupShifts';
 import { useGroupUsers } from '@/hooks/groupAdmin/useGroupUsers';
 import { Shift, ShiftStatus } from '@/types';
@@ -52,6 +52,7 @@ export function ShiftManagementPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null);
+  const [dayShiftsDialog, setDayShiftsDialog] = useState<Shift[] | null>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -91,11 +92,16 @@ export function ShiftManagementPage() {
     toast.success('המשמרת בוטלה');
   };
 
+  const handleFinish = async (e: React.MouseEvent, shiftId: string) => {
+    e.stopPropagation();
+    await updateShift.mutateAsync({ shiftId, data: { status: ShiftStatus.Finished } });
+    toast.success('המשמרת הושלמה ונקודות חולקו');
+  };
+
   const handleDelete = async (e: React.MouseEvent, shiftId: string) => {
     e.stopPropagation();
     await deleteShift.mutateAsync(shiftId);
     setConfirmDelete(null);
-    toast.success('המשמרת נמחקה');
   };
 
   return (
@@ -177,13 +183,22 @@ export function ShiftManagementPage() {
                       </div>
                       <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                         {shift.status === ShiftStatus.Active && (
-                          <button
-                            onClick={(e) => handleCancel(e, shift.id)}
-                            className="p-2 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
-                            title="בטל"
-                          >
-                            <XCircle className="w-4 h-4" />
-                          </button>
+                          <>
+                            <button
+                              onClick={(e) => handleFinish(e, shift.id)}
+                              className="p-2 text-green-400 hover:bg-green-500/10 rounded-lg transition-colors"
+                              title="סיים משמרת"
+                            >
+                              <CheckCircle className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={(e) => handleCancel(e, shift.id)}
+                              className="p-2 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
+                              title="בטל"
+                            >
+                              <XCircle className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
                         {shift.status === ShiftStatus.Cancelled && (
                           <>
@@ -269,7 +284,8 @@ export function ShiftManagementPage() {
                     key={`day-${day}`}
                     className={`relative min-h-[60px] sm:min-h-[90px] p-1 sm:p-2 border rounded-lg transition-colors cursor-pointer select-none ${cellClass} ${ringClass}`}
                     onClick={() => {
-                      if (dayShifts.length > 0) setSelectedShift(dayShifts[0]);
+                      if (dayShifts.length === 1) setSelectedShift(dayShifts[0]);
+                      else if (dayShifts.length > 1) setDayShiftsDialog(dayShifts);
                     }}
                   >
                     <div className={`text-xs sm:text-sm mb-1 ${isToday ? 'text-blue-400 font-bold' : 'text-gray-300'}`}>
@@ -321,6 +337,40 @@ export function ShiftManagementPage() {
           </GlassCard>
         )}
       </div>
+
+      {/* Day shifts picker (when multiple shifts on same day) */}
+      {dayShiftsDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setDayShiftsDialog(null)}>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div className="relative w-full max-w-md glass-card border-blue-500/20 p-6" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-white mb-4">משמרות ביום {new Date(dayShiftsDialog[0].startDate).toLocaleDateString('he-IL')}</h2>
+            <div className="space-y-2">
+              {dayShiftsDialog.map((s) => (
+                <GlassCard
+                  key={s.id}
+                  hover
+                  className="p-3 cursor-pointer"
+                  onClick={() => { setDayShiftsDialog(null); setSelectedShift(s); }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-medium text-white">{s.displayName}</h3>
+                        <StatusBadge type="shift-status" value={s.status} />
+                      </div>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {new Date(s.startDate).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })} - {new Date(s.endDate).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                        {s.location && ` · ${s.location}`}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-500">{s.users?.length ?? 0} משתמשים</span>
+                  </div>
+                </GlassCard>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Detail dialog */}
       {selectedShift && (

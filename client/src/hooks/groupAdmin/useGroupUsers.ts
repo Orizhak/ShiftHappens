@@ -20,8 +20,12 @@ export function useUpdateUserRole(groupId: string) {
       userId: string;
       action: 'makeAdmin' | 'removeAdmin' | 'removeFromGroup';
     }) => groupAdminApi.updateUserRole(groupId, userId, action),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'users'] });
+      if (variables.action === 'removeFromGroup') {
+        qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'leaderboard'] });
+        qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'shifts'] });
+      }
       toast.success('המשתמש עודכן');
     },
     onError: (err: Error) => toast.error(err.message),

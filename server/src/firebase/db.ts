@@ -39,7 +39,6 @@ export const collections = {
   shifts: db.collection('shifts'),
   requests: db.collection('requests'),
   userGroupPoints: db.collection('userGroupPoints'),
-  shiftAssignments: db.collection('shiftAssignments'),
   userCategories: db.collection('userCategories'),
   templates: db.collection('templates'),
 } as const;
