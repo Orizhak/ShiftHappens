@@ -38,7 +38,31 @@ router.patch('/users/:userId', async (req, res) => {
 // DELETE /api/global-admin/users/:userId
 router.delete('/users/:userId', async (req, res) => {
   try {
-    await collections.users.doc(req.params.userId).delete();
+    const userId = req.params.userId;
+
+    // 1. Delete user doc
+    await collections.users.doc(userId).delete();
+
+    // 2. Remove userId from all shifts' users arrays
+    const shiftsSnap = await collections.shifts.where('users', 'array-contains', userId).get();
+    for (const doc of shiftsSnap.docs) {
+      const data = doc.data() as any;
+      const updatedUsers = (data.users as string[]).filter(id => id !== userId);
+      await doc.ref.update({ users: updatedUsers });
+    }
+
+    // 3. Delete all userGroupPoints for this user
+    const pointsSnap = await collections.userGroupPoints.where('userId', '==', userId).get();
+    for (const doc of pointsSnap.docs) {
+      await doc.ref.delete();
+    }
+
+    // 4. Delete all requests for this user
+    const requestsSnap = await collections.requests.where('userId', '==', userId).get();
+    for (const doc of requestsSnap.docs) {
+      await doc.ref.delete();
+    }
+
     res.json({ ok: true });
   } catch (err: any) {
     res.status(400).json({ message: err.message });

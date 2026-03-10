@@ -14,6 +14,7 @@ import {
 } from '../services/shiftService';
 import { getUsersByGroupId, updateUser, getAllGroups, getGroupLeaderboard, getAllUsers, awardPointsForShift } from '../services/userService';
 import { collections, convertTimestamps } from '../firebase/db';
+import { FieldValue } from 'firebase-admin/firestore';
 import { UserCategory, ShiftStatus } from '../types';
 
 /** Params inherited from parent mount: /api/group-admin/:groupId */
@@ -50,7 +51,29 @@ router.get('/shifts/:shiftId', async (req, res) => {
 // POST /api/group-admin/:groupId/shifts
 router.post('/shifts', async (req: Request<GroupParams>, res) => {
   try {
+    const { displayName, startDate, endDate, pointsPerHour, numUsers } = req.body;
+
+    // Input validation
+    if (!displayName || typeof displayName !== 'string' || !displayName.trim()) {
+      res.status(400).json({ message: 'שם משמרת נדרש' }); return;
+    }
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      res.status(400).json({ message: 'תאריכים לא תקינים' }); return;
+    }
+    if (start >= end) {
+      res.status(400).json({ message: 'תאריך התחלה חייב להיות לפני תאריך סיום' }); return;
+    }
+    if (pointsPerHour !== undefined && (typeof pointsPerHour !== 'number' || pointsPerHour < 0)) {
+      res.status(400).json({ message: 'נקודות לשעה חייבות להיות מספר חיובי' }); return;
+    }
+    if (numUsers !== undefined && (typeof numUsers !== 'number' || numUsers < 1)) {
+      res.status(400).json({ message: 'מספר משתמשים חייב להיות לפחות 1' }); return;
+    }
+
     const shiftData = { ...req.body, groupId: req.params.groupId, createdAt: new Date() };
+    if (!shiftData.status) shiftData.status = ShiftStatus.Active;
     const shift = await createShift(shiftData);
     res.status(201).json({ shift });
   } catch (err: any) {
@@ -161,6 +184,12 @@ router.patch('/users/:userId/role', async (req: Request<GroupParams & { userId: 
   try {
     const { groupId, userId } = req.params;
     const { action } = req.body; // 'makeAdmin' | 'removeAdmin' | 'removeFromGroup'
+
+    // Validate action
+    const validActions = ['makeAdmin', 'removeAdmin', 'removeFromGroup'];
+    if (!validActions.includes(action)) {
+      res.status(400).json({ message: 'פעולה לא חוקית' }); return;
+    }
 
     const snap = await collections.users.doc(userId).get();
     if (!snap.exists) { res.status(404).json({ message: 'משתמש לא נמצא' }); return; }
@@ -355,8 +384,7 @@ router.patch('/points/:userId', async (req: Request<GroupParams & { userId: stri
       });
     } else {
       const doc = snap.docs[0];
-      const current = (doc.data() as any).count ?? 0;
-      await doc.ref.update({ count: current + adjustment, lastDate: new Date() });
+      await doc.ref.update({ count: FieldValue.increment(adjustment), lastDate: new Date() });
     }
 
     res.json({ ok: true });

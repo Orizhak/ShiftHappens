@@ -1,4 +1,5 @@
 import { collections, convertTimestamps } from '../firebase/db';
+import { FieldValue } from 'firebase-admin/firestore';
 import { User, UserGroupPoints, Group, Shift, ShiftStatus, UserCategory } from '../types';
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -198,8 +199,7 @@ export async function awardPointsForShift(shift: Shift): Promise<void> {
       });
     } else {
       const doc = snap.docs[0];
-      const current = (doc.data() as any).count ?? 0;
-      await doc.ref.update({ count: current + finalPoints, lastDate: new Date() });
+      await doc.ref.update({ count: FieldValue.increment(finalPoints), lastDate: new Date() });
     }
   }
 }

@@ -25,6 +25,7 @@ export function useUpdateUserRole(groupId: string) {
       if (variables.action === 'removeFromGroup') {
         qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'leaderboard'] });
         qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'shifts'] });
+        qc.invalidateQueries({ queryKey: ['user', 'points'] });
       }
       toast.success('המשתמש עודכן');
     },
@@ -39,6 +40,7 @@ export function useUpdateUserCategories(groupId: string) {
       groupAdminApi.updateUserCategories(groupId, userId, categories),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'users'] });
+      qc.invalidateQueries({ queryKey: ['assignment'] });
       toast.success('קטגוריות עודכנו');
     },
     onError: (err: Error) => toast.error(err.message),
@@ -51,6 +53,7 @@ export function useAddUsersToGroup(groupId: string) {
     mutationFn: (userIds: string[]) => groupAdminApi.addUsersToGroup(groupId, userIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'users'] });
+      qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'available-users'] });
       toast.success('המשתמשים נוספו לקבוצה');
     },
     onError: (err: Error) => toast.error(err.message),

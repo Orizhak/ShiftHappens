@@ -14,7 +14,7 @@ export function useTemplates(groupId: string) {
 export function useCreateTemplate(groupId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Omit<Template, 'id' | 'createdAt'>) =>
+    mutationFn: (data: Omit<Template, 'id' | 'groupId' | 'createdAt'>) =>
       groupAdminApi.createTemplate(groupId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['group-admin', groupId, 'templates'] });

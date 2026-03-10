@@ -30,7 +30,10 @@ export function RegisterPage() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<FormValues>({ resolver: zodResolver(schema) });
+  } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+    defaultValues: { gender: Gender.Male },
+  });
 
   const onSubmit = async (data: FormValues) => {
     setError('');

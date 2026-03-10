@@ -90,7 +90,7 @@ export const groupAdminApi = {
   getTemplates: (groupId: string) =>
     apiGet<{ templates: Template[] }>(`/api/group-admin/${groupId}/templates`),
 
-  createTemplate: (groupId: string, data: Omit<Template, 'id' | 'createdAt'>) =>
+  createTemplate: (groupId: string, data: Omit<Template, 'id' | 'groupId' | 'createdAt'>) =>
     apiPost<{ template: Template }>(`/api/group-admin/${groupId}/templates`, data),
 
   updateTemplate: (groupId: string, templateId: string, data: Partial<Template>) =>

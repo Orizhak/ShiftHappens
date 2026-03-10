@@ -1,4 +1,5 @@
 import { collections, convertTimestamps } from '../firebase/db';
+import { db } from '../firebase/admin';
 import {
   Shift,
   ShiftStatus,
@@ -55,9 +56,20 @@ export async function completeExpiredShifts(groupId: string): Promise<number> {
     const endDate = shift.endDate instanceof Date ? shift.endDate : new Date(shift.endDate as any);
 
     if (endDate < now) {
-      await doc.ref.update({ status: ShiftStatus.Finished });
-      await awardPointsForShift(shift);
-      completed++;
+      // Use transaction to atomically check status and update — prevents double-awarding
+      const didComplete = await db.runTransaction(async (tx) => {
+        const freshDoc = await tx.get(collections.shifts.doc(doc.id));
+        if (!freshDoc.exists) return false;
+        const freshData = freshDoc.data() as any;
+        if (freshData.status !== ShiftStatus.Active) return false; // Already handled
+        tx.update(collections.shifts.doc(doc.id), { status: ShiftStatus.Finished });
+        return true;
+      });
+
+      if (didComplete) {
+        await awardPointsForShift(shift);
+        completed++;
+      }
     }
   }
 
@@ -261,5 +273,8 @@ export async function replaceUserInAssignment(
   const candidates = users.filter((u) => !excluded.has(u.user.id));
 
   const replacement = selectAutoAssignment(candidates, 1);
-  return currentUsers.map((id) => (id === userToReplace ? replacement[0] ?? id : id));
+  if (replacement.length === 0) {
+    throw new Error('לא נמצא מחליף מתאים');
+  }
+  return currentUsers.map((id) => (id === userToReplace ? replacement[0] : id));
 }

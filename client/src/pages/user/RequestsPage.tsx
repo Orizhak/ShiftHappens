@@ -19,6 +19,9 @@ const schema = z.object({
   endDate: z.string().min(1, 'תאריך סיום נדרש'),
   type: z.nativeEnum(RequestType),
   description: z.string().min(1, 'תיאור נדרש'),
+}).refine((d) => !d.startDate || !d.endDate || d.startDate <= d.endDate, {
+  message: 'תאריך התחלה חייב להיות לפני תאריך סיום',
+  path: ['endDate'],
 });
 type FormValues = z.infer<typeof schema>;
 
