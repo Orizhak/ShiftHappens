@@ -94,8 +94,17 @@ function BasicInfoStep({
   onChange: (p: Partial<ShiftDraft>) => void;
   onNext: () => void;
 }) {
-  const canAdvance =
-    draft.displayName.trim() && draft.startDate && draft.location.trim() && draft.duration > 0;
+  const [tried, setTried] = useState(false);
+
+  const missingName = !draft.displayName.trim();
+  const missingLocation = !draft.location.trim();
+  const missingDate = !draft.startDate;
+  const canAdvance = !missingName && !missingLocation && !missingDate && draft.duration > 0;
+
+  const handleNext = () => {
+    if (!canAdvance) { setTried(true); return; }
+    onNext();
+  };
 
   const handleStartHourChange = (startHour: string) => {
     onChange({ startHour, endTime: computeEndTime(startHour, draft.duration) });
@@ -110,6 +119,8 @@ function BasicInfoStep({
     onChange({ duration, endTime: computeEndTime(draft.startHour, duration) });
   };
 
+  const errClass = 'border-red-500/50';
+
   return (
     <div className="space-y-4">
       <div className="grid sm:grid-cols-2 gap-4">
@@ -119,8 +130,9 @@ function BasicInfoStep({
             value={draft.displayName}
             onChange={(e) => onChange({ displayName: e.target.value })}
             placeholder="שם המשמרת"
-            className="glass-input"
+            className={`glass-input ${tried && missingName ? errClass : ''}`}
           />
+          {tried && missingName && <p className="text-red-400 text-xs mt-1">שדה חובה</p>}
         </div>
         <div>
           <label className="block text-sm text-gray-300 mb-1">מיקום *</label>
@@ -128,14 +140,16 @@ function BasicInfoStep({
             value={draft.location}
             onChange={(e) => onChange({ location: e.target.value })}
             placeholder="מיקום המשמרת"
-            className="glass-input"
+            className={`glass-input ${tried && missingLocation ? errClass : ''}`}
           />
+          {tried && missingLocation && <p className="text-red-400 text-xs mt-1">שדה חובה</p>}
         </div>
         <GlassDatePicker
           value={draft.startDate}
           onChange={(d) => onChange({ startDate: d })}
           label="תאריך *"
           placeholder="בחר תאריך"
+          error={tried && missingDate ? 'שדה חובה' : undefined}
         />
         <div>
           <label className="block text-sm text-gray-300 mb-1">שעת התחלה</label>
@@ -189,8 +203,7 @@ function BasicInfoStep({
       </div>
       <div className="flex justify-start">
         <button
-          onClick={onNext}
-          disabled={!canAdvance}
+          onClick={handleNext}
           className="glass-button-primary flex items-center gap-2"
         >
           הבא
@@ -598,6 +611,9 @@ function AssignmentStep({
   };
 
   const updateSplitTime = (slotIndex: number, time: string) => {
+    // Clamp split time between startHour and endTime
+    const endTime = computeEndTime(draft.startHour, draft.duration);
+    if (time <= draft.startHour || time >= endTime) return;
     onChange({ splits: draft.splits.map(s => s.slotIndex === slotIndex ? { ...s, splitTime: time } : s) });
   };
 
@@ -662,7 +678,7 @@ function AssignmentStep({
                         {split && (
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-gray-500">זמן פיצול:</span>
-                            <input type="time" value={split.splitTime} onChange={(e) => updateSplitTime(i, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
+                            <input type="time" value={split.splitTime} min={draft.startHour} max={computeEndTime(draft.startHour, draft.duration)} onChange={(e) => updateSplitTime(i, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
                           </div>
                         )}
                       </div>
@@ -729,7 +745,7 @@ function AssignmentStep({
                   <div className="px-3 py-2 bg-purple-500/5 border-b border-white/10">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-xs text-gray-500">זמן פיצול:</span>
-                      <input type="time" value={split.splitTime} onChange={(e) => updateSplitTime(slotIdx, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
+                      <input type="time" value={split.splitTime} min={draft.startHour} max={computeEndTime(draft.startHour, draft.duration)} onChange={(e) => updateSplitTime(slotIdx, e.target.value)} className="glass-input py-1 px-2 text-xs w-28" />
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className={`p-2 rounded-lg border ${split.firstHalfUser ? 'bg-blue-500/10 border-blue-500/20' : 'bg-white/5 border-white/10'}`}>
@@ -1136,9 +1152,8 @@ export function CreateShiftPage() {
       duration: draft.duration,
       pointsPerHour: draft.pointsPerHour,
       numUsers: draft.numUsers,
-      details: draft.splits.length > 0
-        ? JSON.stringify({ text: draft.details, splits: draft.splits })
-        : draft.details,
+      details: draft.details,
+      splits: draft.splits.length > 0 ? draft.splits : undefined,
       requiredUserCategories: draft.requiredUserCategories,
       forbiddenUserCategories: draft.forbiddenUserCategories,
       users: draft.selectedUsers,

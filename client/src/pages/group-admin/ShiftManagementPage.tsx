@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Calendar, List, Trash2, XCircle, CheckCircle, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Calendar, List, Trash2, XCircle, CheckCircle, ChevronRight, ChevronLeft, X, User, RefreshCw, Check, Zap } from 'lucide-react';
 import { useGroupShifts, useUpdateShift, useDeleteShift } from '@/hooks/groupAdmin/useGroupShifts';
 import { useGroupUsers } from '@/hooks/groupAdmin/useGroupUsers';
-import { Shift, ShiftStatus } from '@/types';
+import { useAssignmentCandidates } from '@/hooks/groupAdmin/useAssignment';
+import { Shift, ShiftStatus, AssignmentShiftData, UserFitness } from '@/types';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -33,6 +34,183 @@ const STATUS_TABS = [
   { key: String(ShiftStatus.Cancelled), label: 'בוטלו' },
 ];
 
+// ─── Replace User Dialog ────────────────────────────────────────────────────
+interface ReplaceUserDialogProps {
+  shift: Shift;
+  userToReplace: string | null;
+  groupId: string;
+  userNames: Record<string, string>;
+  onClose: () => void;
+  onConfirm: (newUsers: string[]) => void;
+}
+
+function ReplaceUserDialog({ shift, userToReplace, groupId, userNames, onClose, onConfirm }: ReplaceUserDialogProps) {
+  const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+
+  const numSlots = userToReplace ? 1 : shift.users.length;
+
+  // Use original shift categories — same filtering and algorithm as the original assignment
+  const shiftData: AssignmentShiftData | null = useMemo(() => {
+    const start = new Date(shift.startDate);
+    const end = new Date(shift.endDate);
+    const duration = (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+    return {
+      numUsers: numSlots,
+      requiredUserCategories: shift.requiredUserCategories ?? [],
+      forbiddenUserCategories: shift.forbiddenUserCategories ?? [],
+      startDate: shift.startDate,
+      startHour: start.toTimeString().slice(0, 5),
+      duration,
+    };
+  }, [shift, numSlots]);
+
+  const { data: candidatesData, isLoading } = useAssignmentCandidates(groupId, shiftData);
+
+  // Exclude ALL current shift users from the candidates list
+  const candidates = useMemo(() => {
+    if (!candidatesData?.users) return [];
+    const excludeSet = new Set(shift.users);
+    return candidatesData.users
+      .filter((u: UserFitness) => !excludeSet.has(u.user.id))
+      .sort((a: UserFitness, b: UserFitness) => {
+        if (a.fitnessScore !== b.fitnessScore) return b.fitnessScore - a.fitnessScore;
+        return a.currentPoints - b.currentPoints;
+      });
+  }, [candidatesData, shift.users]);
+
+  const toggleUser = (userId: string) => {
+    setSelectedUsers((prev) => {
+      if (prev.includes(userId)) return prev.filter((id) => id !== userId);
+      if (prev.length >= numSlots) return prev;
+      return [...prev, userId];
+    });
+  };
+
+  const handleAutoAssign = () => {
+    const fit = candidates.filter((u: UserFitness) => u.isFit);
+    const auto = fit.slice(0, numSlots).map((u: UserFitness) => u.user.id);
+    setSelectedUsers(auto);
+  };
+
+  const handleConfirm = () => {
+    if (selectedUsers.length !== numSlots) return;
+    if (userToReplace) {
+      const newUsers = shift.users.map((id) => (id === userToReplace ? selectedUsers[0] : id));
+      onConfirm(newUsers);
+    } else {
+      onConfirm(selectedUsers);
+    }
+  };
+
+  const title = userToReplace
+    ? `החלפת ${userNames[userToReplace] ?? userToReplace}`
+    : 'החלפת כל המשובצים';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" />
+      <div
+        className="relative w-full max-w-lg glass-card border-amber-500/20 shadow-[0_0_30px_rgba(245,158,11,0.15)] p-6 animate-slide-in max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">{title}</h2>
+            <p className="text-sm text-gray-400">{shift.displayName}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Auto-assign button */}
+        <div className="flex gap-2 mb-3">
+          <button
+            onClick={handleAutoAssign}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg transition-colors border border-blue-500/20"
+            disabled={isLoading}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            שיבוץ אוטומטי
+          </button>
+          <span className="text-xs text-gray-500 self-center">
+            {selectedUsers.length}/{numSlots} נבחרו
+          </span>
+        </div>
+
+        {/* Candidates list */}
+        <div className="flex-1 overflow-y-auto space-y-1.5 min-h-0">
+          {isLoading ? (
+            <div className="text-center text-gray-500 py-8">טוען מועמדים...</div>
+          ) : candidates.length === 0 ? (
+            <div className="text-center text-gray-500 py-8">לא נמצאו מועמדים</div>
+          ) : (
+            candidates.map((c: UserFitness) => {
+              const isSelected = selectedUsers.includes(c.user.id);
+              return (
+                <div
+                  key={c.user.id}
+                  onClick={() => toggleUser(c.user.id)}
+                  className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors border ${
+                    isSelected
+                      ? 'bg-green-500/15 border-green-500/30'
+                      : c.isFit
+                        ? 'bg-white/5 border-white/10 hover:bg-white/10'
+                        : 'bg-red-500/5 border-red-500/10 hover:bg-red-500/10 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                      isSelected ? 'bg-green-500/30' : 'bg-blue-500/20'
+                    }`}>
+                      {isSelected ? (
+                        <Check className="w-3.5 h-3.5 text-green-400" />
+                      ) : (
+                        <User className="w-3 h-3 text-blue-400" />
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-sm text-white">{c.user.name}</span>
+                      {c.unfitReasons.length > 0 && (
+                        <p className="text-xs text-red-400 mt-0.5">{c.unfitReasons.join(', ')}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{c.currentPoints} נק׳</span>
+                    <div className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      c.fitnessScore >= 70 ? 'bg-green-500/20 text-green-400' :
+                      c.fitnessScore >= 40 ? 'bg-amber-500/20 text-amber-400' :
+                      'bg-red-500/20 text-red-400'
+                    }`}>
+                      {c.fitnessScore}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Confirm button */}
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <button
+            onClick={handleConfirm}
+            disabled={selectedUsers.length !== numSlots}
+            className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 rounded-lg font-medium text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            אישור החלפה
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ShiftManagementPage() {
   const { groupId } = useParams<{ groupId: string }>();
   const { data: shifts = [], isLoading } = useGroupShifts(groupId!);
@@ -53,6 +231,10 @@ export function ShiftManagementPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [selectedShift, setSelectedShift] = useState<Shift | null>(null);
   const [dayShiftsDialog, setDayShiftsDialog] = useState<Shift[] | null>(null);
+  const [replaceState, setReplaceState] = useState<{
+    shift: Shift;
+    userToReplace: string | null;
+  } | null>(null);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -102,6 +284,44 @@ export function ShiftManagementPage() {
     e.stopPropagation();
     await deleteShift.mutateAsync(shiftId);
     setConfirmDelete(null);
+  };
+
+  const handleReplaceUser = (shift: Shift, userId: string) => {
+    setSelectedShift(null);
+    setReplaceState({ shift, userToReplace: userId });
+  };
+
+  const handleReplaceAll = (shift: Shift) => {
+    setSelectedShift(null);
+    setReplaceState({ shift, userToReplace: null });
+  };
+
+  const handleReplaceConfirm = async (newUsers: string[]) => {
+    if (!replaceState) return;
+    try {
+      const data: Record<string, unknown> = { users: newUsers };
+      // Propagate user replacements into splits
+      const shifts = replaceState.shift.splits;
+      if (shifts && shifts.length > 0 && replaceState.userToReplace) {
+        const oldId = replaceState.userToReplace;
+        const newId = newUsers[replaceState.shift.users.indexOf(oldId)];
+        if (newId && newId !== oldId) {
+          data.splits = shifts.map(s => ({
+            ...s,
+            firstHalfUser: s.firstHalfUser === oldId ? newId : s.firstHalfUser,
+            secondHalfUser: s.secondHalfUser === oldId ? newId : s.secondHalfUser,
+          }));
+        }
+      }
+      await updateShift.mutateAsync({
+        shiftId: replaceState.shift.id,
+        data,
+      });
+      toast.success('המשמרת עודכנה בהצלחה');
+      setReplaceState(null);
+    } catch {
+      toast.error('שגיאה בעדכון המשמרת');
+    }
   };
 
   return (
@@ -378,6 +598,20 @@ export function ShiftManagementPage() {
           shift={selectedShift}
           onClose={() => setSelectedShift(null)}
           userNames={userNames}
+          onReplaceUser={(userId) => handleReplaceUser(selectedShift, userId)}
+          onReplaceAll={() => handleReplaceAll(selectedShift)}
+        />
+      )}
+
+      {/* Replace user dialog */}
+      {replaceState && (
+        <ReplaceUserDialog
+          shift={replaceState.shift}
+          userToReplace={replaceState.userToReplace}
+          groupId={groupId!}
+          userNames={userNames}
+          onClose={() => setReplaceState(null)}
+          onConfirm={handleReplaceConfirm}
         />
       )}
     </div>

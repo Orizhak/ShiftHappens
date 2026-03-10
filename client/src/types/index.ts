@@ -52,6 +52,13 @@ export interface UserGroupPoints {
   lastDate: string;
 }
 
+export interface ShiftSplit {
+  slotIndex: number;
+  splitTime: string; // HH:mm
+  firstHalfUser?: string;
+  secondHalfUser?: string;
+}
+
 export interface Shift {
   id: string;
   groupId: string;
@@ -63,6 +70,7 @@ export interface Shift {
   users: string[];
   pointsPerHour: number;
   details?: string;
+  splits?: ShiftSplit[];
   status: ShiftStatus;
   location: string;
   createdAt: string;
@@ -81,6 +89,7 @@ export interface Request {
 
 export interface Template {
   id: string;
+  groupId: string;
   displayName: string;
   includedUserCategories: string[];
   excludedUserCategories: string[];

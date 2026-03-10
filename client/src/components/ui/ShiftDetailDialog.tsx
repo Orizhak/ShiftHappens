@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { X, MapPin, Clock, Calendar, Users, Trash2, ChevronDown, ChevronUp, User } from 'lucide-react';
-import { Shift, Request, ShiftStatus, RequestType } from '@/types';
+import { X, MapPin, Clock, Calendar, Users, Trash2, ChevronDown, ChevronUp, User, RefreshCw } from 'lucide-react';
+import { Shift, ShiftSplit, Request, ShiftStatus, RequestType } from '@/types';
 import { StatusBadge } from './StatusBadge';
 import { GlassButton } from './GlassButton';
 
@@ -13,6 +13,10 @@ interface ShiftDetailDialogProps {
   groupName?: string;
   /** Map of userId → display name for showing assigned users */
   userNames?: Record<string, string>;
+  /** Called when admin wants to replace a specific user */
+  onReplaceUser?: (userId: string) => void;
+  /** Called when admin wants to replace all users */
+  onReplaceAll?: () => void;
 }
 
 function formatDate(dateStr: string) {
@@ -28,7 +32,7 @@ function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function ShiftDetailDialog({ shift, request, onClose, onDeleteRequest, isDeleting, groupName, userNames }: ShiftDetailDialogProps) {
+export function ShiftDetailDialog({ shift, request, onClose, onDeleteRequest, isDeleting, groupName, userNames, onReplaceUser, onReplaceAll }: ShiftDetailDialogProps) {
   const [showUsers, setShowUsers] = useState(false);
   if (!shift && !request) return null;
 
@@ -89,11 +93,51 @@ export function ShiftDetailDialog({ shift, request, onClose, onDeleteRequest, is
                   <p className="text-sm text-amber-400">{shift.pointsPerHour} נקודות לשעה</p>
                 </div>
               )}
-              {shift.details && (
-                <div className="mt-3 p-3 bg-white/5 rounded-lg">
-                  <p className="text-sm text-gray-400">{shift.details}</p>
-                </div>
-              )}
+              {(() => {
+                // Prefer the proper splits field; fall back to legacy JSON in details
+                let detailsText = shift.details || '';
+                let splits: ShiftSplit[] | null = shift.splits && shift.splits.length > 0 ? shift.splits : null;
+                if (!splits && shift.details) {
+                  try {
+                    const parsed = JSON.parse(shift.details);
+                    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.splits)) {
+                      detailsText = parsed.text || '';
+                      splits = parsed.splits;
+                    }
+                  } catch { /* plain text details */ }
+                }
+                return (
+                  <>
+                    {detailsText && (
+                      <div className="mt-3 p-3 bg-white/5 rounded-lg">
+                        <p className="text-sm text-gray-400">{detailsText}</p>
+                      </div>
+                    )}
+                    {splits && splits.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        <p className="text-xs font-medium text-purple-300">פיצולים:</p>
+                        {splits.map((s, i) => (
+                          <div key={i} className="p-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                            <p className="text-xs text-purple-300">
+                              עמדה {(s.slotIndex ?? i) + 1} — פיצול ב-{s.splitTime}
+                            </p>
+                            <div className="grid grid-cols-2 gap-2 text-xs mt-1">
+                              <div className="bg-white/5 rounded p-1.5">
+                                <span className="text-gray-500">חלק א׳: </span>
+                                <span className="text-white">{s.firstHalfUser ? (userNames?.[s.firstHalfUser] ?? s.firstHalfUser) : 'לא שובץ'}</span>
+                              </div>
+                              <div className="bg-white/5 rounded p-1.5">
+                                <span className="text-gray-500">חלק ב׳: </span>
+                                <span className="text-white">{s.secondHalfUser ? (userNames?.[s.secondHalfUser] ?? s.secondHalfUser) : 'לא שובץ'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {shift.users && shift.users.length > 0 && (
                 <div className="mt-3">
                   <button
@@ -107,15 +151,37 @@ export function ShiftDetailDialog({ shift, request, onClose, onDeleteRequest, is
                   {showUsers && (
                     <div className="mt-2 space-y-1.5">
                       {shift.users.map((uid) => (
-                        <div key={uid} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
-                          <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
-                            <User className="w-3 h-3 text-blue-400" />
+                        <div key={uid} className="flex items-center justify-between gap-2 p-2 bg-white/5 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
+                              <User className="w-3 h-3 text-blue-400" />
+                            </div>
+                            <span className="text-sm text-gray-300">{userNames?.[uid] ?? uid}</span>
                           </div>
-                          <span className="text-sm text-gray-300">{userNames?.[uid] ?? uid}</span>
+                          {onReplaceUser && shift.status === ShiftStatus.Active && (
+                            <button
+                              onClick={() => onReplaceUser(uid)}
+                              className="p-1.5 text-amber-400 hover:bg-amber-500/10 rounded-lg transition-colors"
+                              title="החלף משתמש"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+              {onReplaceAll && shift.status === ShiftStatus.Active && shift.users && shift.users.length > 0 && (
+                <div className="mt-3">
+                  <button
+                    onClick={onReplaceAll}
+                    className="flex items-center gap-2 text-sm text-amber-400 hover:text-amber-300 transition-colors px-3 py-2 bg-amber-500/10 hover:bg-amber-500/15 rounded-lg border border-amber-500/20 w-full justify-center"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>החלף את כל המשתמשים</span>
+                  </button>
                 </div>
               )}
             </div>
